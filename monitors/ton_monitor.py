@@ -10,37 +10,37 @@ logger = logging.getLogger(__name__)
 class TONMonitor(BaseMonitor):
     def __init__(self, min_usd: float, api_key: str = ''):
         super().__init__('TON', min_usd)
-        self.api_key = api_key
-        self.api_url = 'https://tonapi.io/v2'
+        # Use public tonscan.org API - no authentication needed
+        self.api_url = 'https://toncenter.com/api/v2'
         self.price_cache = {'price': 0, 'timestamp': 0}
 
     async def get_current_price_usd(self) -> float:
-        """Get TON price in USD with caching"""
+        """Get TON price in USD from CoinGecko (public API)"""
         # Cache price for 5 minutes
         if time.time() - self.price_cache['timestamp'] < 300:
             return self.price_cache['price']
 
         try:
             async with aiohttp.ClientSession() as session:
-                headers = {'Authorization': f'Bearer {self.api_key}'} if self.api_key else {}
                 async with session.get(
-                    f'{self.api_url}/rates?tokens=ton&currencies=usd',
-                    headers=headers
+                    'https://api.coingecko.com/api/v3/simple/price',
+                    params={'ids': 'the-open-network', 'vs_currencies': 'usd'}
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
-                        price = data['rates']['TON']['prices']['USD']
-                        self.price_cache = {'price': price, 'timestamp': time.time()}
-                        return price
-                    else:
-                        logger.warning(f"TON: Failed to get price, status {response.status}")
-                        return self.price_cache.get('price', 0)
+                        price = data.get('the-open-network', {}).get('usd', 0)
+                        if price > 0:
+                            self.price_cache = {'price': price, 'timestamp': time.time()}
+                            logger.info(f"TON: Price updated: ${price}")
+                            return price
+                    logger.warning(f"TON: Failed to get price, status {response.status}")
+                    return self.price_cache.get('price', 0)
         except Exception as e:
             logger.error(f"TON: Error getting price: {e}")
             return self.price_cache.get('price', 0)
 
     async def get_latest_transactions(self) -> List[Transaction]:
-        """Fetch latest TON transactions"""
+        """Fetch latest TON transactions from public API"""
         transactions = []
         try:
             ton_price = await self.get_current_price_usd()
@@ -48,79 +48,98 @@ class TONMonitor(BaseMonitor):
                 logger.warning("TON: Cannot fetch transactions without price data")
                 return []
 
-            # Calculate minimum TON amount needed
-            min_ton = self.min_usd / ton_price
-
             async with aiohttp.ClientSession() as session:
-                headers = {'Authorization': f'Bearer {self.api_key}'} if self.api_key else {}
-
-                # Get latest transactions from blockchain
+                # Get latest masterchain blocks to find recent transactions
                 async with session.get(
-                    f'{self.api_url}/blockchain/transactions',
-                    headers=headers,
-                    params={'limit': 100}
+                    f'{self.api_url}/getMasterchainInfo'
                 ) as response:
                     if response.status != 200:
                         logger.warning(f"TON: API returned status {response.status}")
                         return []
 
-                    data = await response.json()
+                    masterchain_data = await response.json()
+                    if not masterchain_data.get('ok'):
+                        return []
 
-                    for tx in data.get('transactions', []):
+                    last_block = masterchain_data['result']['last']
+                    seqno = last_block['seqno']
+
+                    # Get transactions from recent blocks
+                    for block_offset in range(10):  # Check last 10 blocks
+                        current_seqno = seqno - block_offset
+
                         try:
-                            # Extract transaction details
-                            tx_hash = tx.get('hash', '')
-                            timestamp = tx.get('utime', 0)
+                            async with session.get(
+                                f'{self.api_url}/getBlockTransactions',
+                                params={
+                                    'workchain': -1,
+                                    'shard': '-9223372036854775808',
+                                    'seqno': current_seqno
+                                }
+                            ) as block_response:
+                                if block_response.status != 200:
+                                    continue
 
-                            # Get transaction value
-                            out_msgs = tx.get('out_msgs', [])
-                            in_msg = tx.get('in_msg', {})
+                                block_data = await block_response.json()
+                                if not block_data.get('ok'):
+                                    continue
 
-                            # Check outgoing messages
-                            for msg in out_msgs:
-                                value_nano = int(msg.get('value', 0))
-                                value_ton = value_nano / 1e9
-                                value_usd = value_ton * ton_price
+                                block_txs = block_data['result']['transactions']
 
-                                if value_usd >= self.min_usd:
-                                    sender = msg.get('source', {}).get('address', 'Unknown')
-                                    receiver = msg.get('destination', {}).get('address', 'Unknown')
+                                for tx_info in block_txs[:20]:  # Limit to 20 transactions per block
+                                    try:
+                                        # Get detailed transaction info
+                                        async with session.get(
+                                            f'{self.api_url}/getTransactions',
+                                            params={
+                                                'address': tx_info['account'],
+                                                'limit': 1,
+                                                'lt': tx_info['lt'],
+                                                'hash': tx_info['hash']
+                                            }
+                                        ) as tx_response:
+                                            if tx_response.status != 200:
+                                                continue
 
-                                    transactions.append(Transaction(
-                                        network='TON',
-                                        tx_hash=tx_hash,
-                                        amount_usd=value_usd,
-                                        sender=sender,
-                                        receiver=receiver,
-                                        timestamp=timestamp,
-                                        amount_native=value_ton
-                                    ))
+                                            tx_data = await tx_response.json()
+                                            if not tx_data.get('ok') or not tx_data.get('result'):
+                                                continue
 
-                            # Check incoming message
-                            if in_msg:
-                                value_nano = int(in_msg.get('value', 0))
-                                value_ton = value_nano / 1e9
-                                value_usd = value_ton * ton_price
+                                            tx = tx_data['result'][0]
 
-                                if value_usd >= self.min_usd:
-                                    sender = in_msg.get('source', {}).get('address', 'Unknown')
-                                    receiver = in_msg.get('destination', {}).get('address', 'Unknown')
+                                            # Parse transaction value
+                                            if tx.get('out_msgs'):
+                                                for out_msg in tx['out_msgs']:
+                                                    value_nano = int(out_msg.get('value', 0))
+                                                    value_ton = value_nano / 1e9
+                                                    value_usd = value_ton * ton_price
 
-                                    transactions.append(Transaction(
-                                        network='TON',
-                                        tx_hash=tx_hash,
-                                        amount_usd=value_usd,
-                                        sender=sender,
-                                        receiver=receiver,
-                                        timestamp=timestamp,
-                                        amount_native=value_ton
-                                    ))
+                                                    if value_usd >= self.min_usd:
+                                                        tx_hash = tx.get('transaction_id', {}).get('hash', 'Unknown')
+                                                        sender = out_msg.get('source', 'Unknown')
+                                                        receiver = out_msg.get('destination', 'Unknown')
+                                                        timestamp = tx.get('utime', 0)
+
+                                                        transactions.append(Transaction(
+                                                            network='TON',
+                                                            tx_hash=tx_hash,
+                                                            amount_usd=value_usd,
+                                                            sender=sender,
+                                                            receiver=receiver,
+                                                            timestamp=timestamp,
+                                                            amount_native=value_ton
+                                                        ))
+
+                                    except Exception as e:
+                                        logger.debug(f"TON: Error parsing transaction details: {e}")
+                                        continue
 
                         except Exception as e:
-                            logger.error(f"TON: Error parsing transaction: {e}")
+                            logger.debug(f"TON: Error fetching block {current_seqno}: {e}")
                             continue
 
         except Exception as e:
             logger.error(f"TON: Error fetching transactions: {e}")
 
+        logger.info(f"TON: Found {len(transactions)} transactions above ${self.min_usd}")
         return transactions

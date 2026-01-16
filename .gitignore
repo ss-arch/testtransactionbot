@@ -49,3 +49,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local deployment info (not for GitHub)
+DEPLOYMENT_LOCAL.md
+server_info.txt
+.server_credentials
