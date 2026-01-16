@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  transaction-monitor:
+    build: .
+    container_name: transaction-monitor-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./bot.log:/app/bot.log
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - TZ=UTC
