@@ -3,20 +3,19 @@ from typing import List
 import logging
 from .base_monitor import BaseMonitor, Transaction
 import time
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
 
 class TONMonitor(BaseMonitor):
-    def __init__(self, min_usd: float, api_key: str = ''):
+    def __init__(self, min_usd: float):
         super().__init__('TON', min_usd)
-        # Use public tonscan.org API - no authentication needed
-        self.api_url = 'https://toncenter.com/api/v2'
+        self.explorer_url = 'https://tonscan.org'
         self.price_cache = {'price': 0, 'timestamp': 0}
 
     async def get_current_price_usd(self) -> float:
-        """Get TON price in USD from CoinGecko (public API)"""
-        # Cache price for 5 minutes
+        """Get TON price in USD from CoinGecko"""
         if time.time() - self.price_cache['timestamp'] < 300:
             return self.price_cache['price']
 
@@ -40,7 +39,7 @@ class TONMonitor(BaseMonitor):
             return self.price_cache.get('price', 0)
 
     async def get_latest_transactions(self) -> List[Transaction]:
-        """Fetch latest TON transactions from public API"""
+        """Scrape latest TON transactions from tonscan.org"""
         transactions = []
         try:
             ton_price = await self.get_current_price_usd()
@@ -49,93 +48,56 @@ class TONMonitor(BaseMonitor):
                 return []
 
             async with aiohttp.ClientSession() as session:
-                # Get latest masterchain blocks to find recent transactions
-                async with session.get(
-                    f'{self.api_url}/getMasterchainInfo'
-                ) as response:
+                async with session.get(f'{self.explorer_url}/') as response:
                     if response.status != 200:
-                        logger.warning(f"TON: API returned status {response.status}")
+                        logger.warning(f"TON: Explorer returned status {response.status}")
                         return []
 
-                    masterchain_data = await response.json()
-                    if not masterchain_data.get('ok'):
-                        return []
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'lxml')
 
-                    last_block = masterchain_data['result']['last']
-                    seqno = last_block['seqno']
+                    # Find transaction rows on homepage
+                    tx_rows = soup.find_all('tr', class_='transaction-row')[:20]
 
-                    # Get transactions from recent blocks
-                    for block_offset in range(10):  # Check last 10 blocks
-                        current_seqno = seqno - block_offset
-
+                    for row in tx_rows:
                         try:
-                            async with session.get(
-                                f'{self.api_url}/getBlockTransactions',
-                                params={
-                                    'workchain': -1,
-                                    'shard': '-9223372036854775808',
-                                    'seqno': current_seqno
-                                }
-                            ) as block_response:
-                                if block_response.status != 200:
-                                    continue
+                            # Extract transaction hash
+                            tx_link = row.find('a', href=lambda x: x and '/tx/' in x)
+                            if not tx_link:
+                                continue
+                            tx_hash = tx_link['href'].replace('/tx/', '')
 
-                                block_data = await block_response.json()
-                                if not block_data.get('ok'):
-                                    continue
+                            # Extract amount
+                            amount_cell = row.find('td', class_='amount')
+                            if not amount_cell:
+                                continue
+                            amount_text = amount_cell.get_text(strip=True)
+                            amount_ton = float(amount_text.replace('TON', '').replace(',', '').strip())
 
-                                block_txs = block_data['result']['transactions']
+                            amount_usd = amount_ton * ton_price
 
-                                for tx_info in block_txs[:20]:  # Limit to 20 transactions per block
-                                    try:
-                                        # Get detailed transaction info
-                                        async with session.get(
-                                            f'{self.api_url}/getTransactions',
-                                            params={
-                                                'address': tx_info['account'],
-                                                'limit': 1,
-                                                'lt': tx_info['lt'],
-                                                'hash': tx_info['hash']
-                                            }
-                                        ) as tx_response:
-                                            if tx_response.status != 200:
-                                                continue
+                            if amount_usd >= self.min_usd:
+                                # Extract sender and receiver
+                                address_cells = row.find_all('td', class_='address')
+                                sender = address_cells[0].get_text(strip=True) if len(address_cells) > 0 else 'Unknown'
+                                receiver = address_cells[1].get_text(strip=True) if len(address_cells) > 1 else 'Unknown'
 
-                                            tx_data = await tx_response.json()
-                                            if not tx_data.get('ok') or not tx_data.get('result'):
-                                                continue
+                                # Extract timestamp
+                                time_cell = row.find('td', class_='time')
+                                timestamp = int(time.time()) if time_cell else 0
 
-                                            tx = tx_data['result'][0]
-
-                                            # Parse transaction value
-                                            if tx.get('out_msgs'):
-                                                for out_msg in tx['out_msgs']:
-                                                    value_nano = int(out_msg.get('value', 0))
-                                                    value_ton = value_nano / 1e9
-                                                    value_usd = value_ton * ton_price
-
-                                                    if value_usd >= self.min_usd:
-                                                        tx_hash = tx.get('transaction_id', {}).get('hash', 'Unknown')
-                                                        sender = out_msg.get('source', 'Unknown')
-                                                        receiver = out_msg.get('destination', 'Unknown')
-                                                        timestamp = tx.get('utime', 0)
-
-                                                        transactions.append(Transaction(
-                                                            network='TON',
-                                                            tx_hash=tx_hash,
-                                                            amount_usd=value_usd,
-                                                            sender=sender,
-                                                            receiver=receiver,
-                                                            timestamp=timestamp,
-                                                            amount_native=value_ton
-                                                        ))
-
-                                    except Exception as e:
-                                        logger.debug(f"TON: Error parsing transaction details: {e}")
-                                        continue
+                                transactions.append(Transaction(
+                                    network='TON',
+                                    tx_hash=tx_hash,
+                                    amount_usd=amount_usd,
+                                    sender=sender,
+                                    receiver=receiver,
+                                    timestamp=timestamp,
+                                    amount_native=amount_ton
+                                ))
 
                         except Exception as e:
-                            logger.debug(f"TON: Error fetching block {current_seqno}: {e}")
+                            logger.debug(f"TON: Error parsing transaction: {e}")
                             continue
 
         except Exception as e:
@@ -145,7 +107,7 @@ class TONMonitor(BaseMonitor):
         return transactions
 
     async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """Fetch latest TON transactions regardless of amount"""
+        """Scrape latest TON transactions regardless of amount"""
         transactions = []
         try:
             ton_price = await self.get_current_price_usd()
@@ -153,84 +115,45 @@ class TONMonitor(BaseMonitor):
                 return []
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'{self.api_url}/getMasterchainInfo') as response:
+                async with session.get(f'{self.explorer_url}/') as response:
                     if response.status != 200:
                         return []
 
-                    masterchain_data = await response.json()
-                    if not masterchain_data.get('ok'):
-                        return []
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'lxml')
 
-                    last_block = masterchain_data['result']['last']
-                    seqno = last_block['seqno']
+                    tx_rows = soup.find_all('tr', class_='transaction-row')[:limit]
 
-                    for block_offset in range(5):
-                        if len(transactions) >= limit:
-                            break
-
-                        current_seqno = seqno - block_offset
-
+                    for row in tx_rows:
                         try:
-                            async with session.get(
-                                f'{self.api_url}/getBlockTransactions',
-                                params={'workchain': -1, 'shard': '-9223372036854775808', 'seqno': current_seqno}
-                            ) as block_response:
-                                if block_response.status != 200:
-                                    continue
+                            tx_link = row.find('a', href=lambda x: x and '/tx/' in x)
+                            if not tx_link:
+                                continue
+                            tx_hash = tx_link['href'].replace('/tx/', '')
 
-                                block_data = await block_response.json()
-                                if not block_data.get('ok'):
-                                    continue
+                            amount_cell = row.find('td', class_='amount')
+                            if not amount_cell:
+                                continue
+                            amount_text = amount_cell.get_text(strip=True)
+                            amount_ton = float(amount_text.replace('TON', '').replace(',', '').strip())
 
-                                block_txs = block_data['result']['transactions']
+                            amount_usd = amount_ton * ton_price
 
-                                for tx_info in block_txs[:10]:
-                                    if len(transactions) >= limit:
-                                        break
+                            address_cells = row.find_all('td', class_='address')
+                            sender = address_cells[0].get_text(strip=True) if len(address_cells) > 0 else 'Unknown'
+                            receiver = address_cells[1].get_text(strip=True) if len(address_cells) > 1 else 'Unknown'
 
-                                    try:
-                                        async with session.get(
-                                            f'{self.api_url}/getTransactions',
-                                            params={'address': tx_info['account'], 'limit': 1, 'lt': tx_info['lt'], 'hash': tx_info['hash']}
-                                        ) as tx_response:
-                                            if tx_response.status != 200:
-                                                continue
+                            timestamp = int(time.time())
 
-                                            tx_data = await tx_response.json()
-                                            if not tx_data.get('ok') or not tx_data.get('result'):
-                                                continue
-
-                                            tx = tx_data['result'][0]
-
-                                            if tx.get('out_msgs'):
-                                                for out_msg in tx['out_msgs']:
-                                                    if len(transactions) >= limit:
-                                                        break
-
-                                                    value_nano = int(out_msg.get('value', 0))
-                                                    if value_nano == 0:
-                                                        continue
-
-                                                    value_ton = value_nano / 1e9
-                                                    value_usd = value_ton * ton_price
-
-                                                    tx_hash = tx.get('transaction_id', {}).get('hash', 'Unknown')
-                                                    sender = out_msg.get('source', 'Unknown')
-                                                    receiver = out_msg.get('destination', 'Unknown')
-                                                    timestamp = tx.get('utime', 0)
-
-                                                    transactions.append(Transaction(
-                                                        network='TON',
-                                                        tx_hash=tx_hash,
-                                                        amount_usd=value_usd,
-                                                        sender=sender,
-                                                        receiver=receiver,
-                                                        timestamp=timestamp,
-                                                        amount_native=value_ton
-                                                    ))
-
-                                    except Exception:
-                                        continue
+                            transactions.append(Transaction(
+                                network='TON',
+                                tx_hash=tx_hash,
+                                amount_usd=amount_usd,
+                                sender=sender,
+                                receiver=receiver,
+                                timestamp=timestamp,
+                                amount_native=amount_ton
+                            ))
 
                         except Exception:
                             continue

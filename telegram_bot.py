@@ -25,8 +25,8 @@ class TelegramNotifier:
         receiver_short = self._shorten_address(tx.receiver)
 
         # Get explorer URL
-        explorer_url = config.EXPLORERS.get(tx.network, '')
-        explorer_link = f"{explorer_url}{tx.tx_hash}"
+        explorer_info = config.EXPLORERS.get(tx.network, {})
+        explorer_link = f"{explorer_info.get('tx', '')}{tx.tx_hash}"
 
         # Build message
         message = f"""
@@ -65,8 +65,7 @@ class TelegramNotifier:
         symbols = {
             'TON': 'TON',
             'Everscale': 'EVER',
-            'Venom': 'VENOM',
-            'Humanode (HUMO)': 'HUMO'
+            'Venom': 'VENOM'
         }
         return symbols.get(network, 'TOKEN')
 
@@ -92,7 +91,7 @@ class TelegramNotifier:
             message = f"""
 🤖 <b>Transaction Monitor Bot Started</b>
 
-Monitoring networks: TON, Everscale, Venom, Humanode
+Monitoring networks: TON, Everscale, Venom
 Alert threshold: ${config.MIN_TRANSACTION_USD:,.0f}
 Poll interval: {config.POLL_INTERVAL_SECONDS}s
 
@@ -133,8 +132,8 @@ Poll interval: {config.POLL_INTERVAL_SECONDS}s
                     continue
 
                 for tx in transactions[:5]:
-                    explorer_url = config.EXPLORERS.get(network, '')
-                    tx_link = f"{explorer_url}{tx.tx_hash}"
+                    explorer_info = config.EXPLORERS.get(network, {})
+                    tx_link = f"{explorer_info.get('tx', '')}{tx.tx_hash}"
                     amount_str = f"{tx.amount_native:,.4f} {token_symbol}"
                     message += f"  • <a href=\"{tx_link}\">{amount_str}</a>\n"
 

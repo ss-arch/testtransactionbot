@@ -11,16 +11,18 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', 60))
 MIN_TRANSACTION_USD = float(os.getenv('MIN_TRANSACTION_USD', 100))  # Default: $100 USD
 
-# API Configuration
-TON_API_KEY = os.getenv('TON_API_KEY', '')
-EVERSCALE_RPC_URL = os.getenv('EVERSCALE_RPC_URL', 'https://mainnet.evercloud.dev')
-VENOM_RPC_URL = os.getenv('VENOM_RPC_URL', 'https://jrpc.venom.foundation')
-HUMANODE_RPC_URL = os.getenv('HUMANODE_RPC_URL', 'https://explorer-rpc-http.mainnet.stages.humanode.io')
-
-# Explorer URLs
+# Explorer URLs (scraping sources)
 EXPLORERS = {
-    'TON': 'https://tonviewer.com/transaction/',
-    'Everscale': 'https://everscan.io/transactions/',
-    'Venom': 'https://venomscan.com/transactions/',
-    'Humanode (HUMO)': 'https://humanode.subscan.io/extrinsic/'
+    'TON': {
+        'base': 'https://tonscan.org',
+        'tx': 'https://tonscan.org/tx/'
+    },
+    'Everscale': {
+        'base': 'https://everscan.io',
+        'tx': 'https://everscan.io/transactions/'
+    },
+    'Venom': {
+        'base': 'https://venomscan.com',
+        'tx': 'https://venomscan.com/transactions/'
+    }
 }

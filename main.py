@@ -15,7 +15,6 @@ from monitors import (
     TONMonitor,
     EverscaleMonitor,
     VenomMonitor,
-    HumanodeMonitor,
     BaseMonitor,
     Transaction
 )
@@ -45,22 +44,9 @@ class TransactionMonitorBot:
 
         # Initialize monitors
         self.monitors: List[BaseMonitor] = [
-            TONMonitor(
-                min_usd=config.MIN_TRANSACTION_USD,
-                api_key=config.TON_API_KEY
-            ),
-            EverscaleMonitor(
-                min_usd=config.MIN_TRANSACTION_USD,
-                rpc_url=config.EVERSCALE_RPC_URL
-            ),
-            VenomMonitor(
-                min_usd=config.MIN_TRANSACTION_USD,
-                rpc_url=config.VENOM_RPC_URL
-            ),
-            HumanodeMonitor(
-                min_usd=config.MIN_TRANSACTION_USD,
-                rpc_url=config.HUMANODE_RPC_URL
-            )
+            TONMonitor(min_usd=config.MIN_TRANSACTION_USD),
+            EverscaleMonitor(min_usd=config.MIN_TRANSACTION_USD),
+            VenomMonitor(min_usd=config.MIN_TRANSACTION_USD)
         ]
 
         self.is_running = False
