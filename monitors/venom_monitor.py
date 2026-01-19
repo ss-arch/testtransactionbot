@@ -3,7 +3,6 @@ from typing import List
 import logging
 from .base_monitor import BaseMonitor, Transaction
 import time
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +10,7 @@ logger = logging.getLogger(__name__)
 class VenomMonitor(BaseMonitor):
     def __init__(self, min_usd: float):
         super().__init__('Venom', min_usd)
+        self.graphql_url = 'https://gql.venom.foundation/graphql'
         self.explorer_url = 'https://venomscan.com'
         self.price_cache = {'price': 0, 'timestamp': 0}
 
@@ -38,8 +38,19 @@ class VenomMonitor(BaseMonitor):
             logger.error(f"Venom: Error getting price: {e}")
             return self.price_cache.get('price', 0)
 
+    def _hex_to_decimal(self, hex_value: str) -> float:
+        """Convert hex value to decimal and divide by 10^9 for VENOM"""
+        if not hex_value or hex_value == "0x0":
+            return 0
+        try:
+            value_nano = int(hex_value, 16)
+            return value_nano / 1_000_000_000  # Convert from nanoVENOM to VENOM
+        except Exception as e:
+            logger.debug(f"Venom: Error converting hex {hex_value}: {e}")
+            return 0
+
     async def get_latest_transactions(self) -> List[Transaction]:
-        """Scrape latest Venom transactions from venomscan.com"""
+        """Get latest Venom transactions using GraphQL API"""
         transactions = []
         try:
             venom_price = await self.get_current_price_usd()
@@ -47,46 +58,59 @@ class VenomMonitor(BaseMonitor):
                 logger.warning("Venom: Cannot fetch transactions without price data")
                 return []
 
+            query = """
+            query {
+                transactions(
+                    limit: 50,
+                    orderBy: {path: "now", direction: DESC}
+                ) {
+                    id
+                    now
+                    balance_delta
+                    account_addr
+                    in_message {
+                        value
+                        src
+                        dst
+                    }
+                }
+            }
+            """
+
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'{self.explorer_url}/') as response:
+                async with session.post(
+                    self.graphql_url,
+                    json={'query': query},
+                    headers={'Content-Type': 'application/json'}
+                ) as response:
                     if response.status != 200:
-                        logger.warning(f"Venom: Explorer returned status {response.status}")
+                        logger.warning(f"Venom: GraphQL API returned status {response.status}")
                         return []
 
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'lxml')
+                    data = await response.json()
+                    tx_list = data.get('data', {}).get('transactions', [])
 
-                    tx_rows = soup.find_all('tr', class_='transaction-row')[:20]
-
-                    for row in tx_rows:
+                    for tx in tx_list:
                         try:
-                            tx_link = row.find('a', href=lambda x: x and '/transactions/' in x)
-                            if not tx_link:
+                            in_msg = tx.get('in_message')
+                            if not in_msg or not in_msg.get('value'):
                                 continue
-                            tx_hash = tx_link['href'].split('/')[-1]
 
-                            amount_cell = row.find('td', class_='amount')
-                            if not amount_cell:
+                            # Convert hex value to VENOM
+                            amount_venom = self._hex_to_decimal(in_msg['value'])
+                            if amount_venom == 0:
                                 continue
-                            amount_text = amount_cell.get_text(strip=True)
-                            amount_venom = float(amount_text.replace('VENOM', '').replace(',', '').strip())
 
                             amount_usd = amount_venom * venom_price
 
                             if amount_usd >= self.min_usd:
-                                address_cells = row.find_all('td', class_='address')
-                                sender = address_cells[0].get_text(strip=True) if len(address_cells) > 0 else 'Unknown'
-                                receiver = address_cells[1].get_text(strip=True) if len(address_cells) > 1 else 'Unknown'
-
-                                timestamp = int(time.time())
-
                                 transactions.append(Transaction(
                                     network='Venom',
-                                    tx_hash=tx_hash,
+                                    tx_hash=tx['id'],
                                     amount_usd=amount_usd,
-                                    sender=sender,
-                                    receiver=receiver,
-                                    timestamp=timestamp,
+                                    sender=in_msg.get('src', 'Unknown'),
+                                    receiver=in_msg.get('dst', 'Unknown'),
+                                    timestamp=tx['now'],
                                     amount_native=amount_venom
                                 ))
 
@@ -101,51 +125,71 @@ class VenomMonitor(BaseMonitor):
         return transactions
 
     async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """Scrape latest Venom transactions regardless of amount"""
+        """Get latest Venom transactions for dashboard"""
         transactions = []
         try:
             venom_price = await self.get_current_price_usd()
             if venom_price == 0:
                 return []
 
+            query = """
+            query {
+                transactions(
+                    limit: %d,
+                    orderBy: {path: "now", direction: DESC}
+                ) {
+                    id
+                    now
+                    balance_delta
+                    account_addr
+                    in_message {
+                        value
+                        src
+                        dst
+                    }
+                }
+            }
+            """ % limit
+
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'{self.explorer_url}/') as response:
+                async with session.post(
+                    self.graphql_url,
+                    json={'query': query},
+                    headers={'Content-Type': 'application/json'}
+                ) as response:
                     if response.status != 200:
                         return []
 
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'lxml')
+                    data = await response.json()
+                    tx_list = data.get('data', {}).get('transactions', [])
 
-                    tx_rows = soup.find_all('tr', class_='transaction-row')[:limit]
-
-                    for row in tx_rows:
+                    for tx in tx_list:
                         try:
-                            tx_link = row.find('a', href=lambda x: x and '/transactions/' in x)
-                            if not tx_link:
-                                continue
-                            tx_hash = tx_link['href'].split('/')[-1]
+                            in_msg = tx.get('in_message')
+                            if not in_msg or not in_msg.get('value'):
+                                # Use balance_delta if no in_message
+                                amount_venom = self._hex_to_decimal(tx.get('balance_delta', '0x0'))
+                                if amount_venom <= 0:
+                                    continue
+                                sender = 'Unknown'
+                                receiver = tx.get('account_addr', 'Unknown')
+                            else:
+                                amount_venom = self._hex_to_decimal(in_msg['value'])
+                                sender = in_msg.get('src', 'Unknown')
+                                receiver = in_msg.get('dst', 'Unknown')
 
-                            amount_cell = row.find('td', class_='amount')
-                            if not amount_cell:
+                            if amount_venom == 0:
                                 continue
-                            amount_text = amount_cell.get_text(strip=True)
-                            amount_venom = float(amount_text.replace('VENOM', '').replace(',', '').strip())
 
                             amount_usd = amount_venom * venom_price
 
-                            address_cells = row.find_all('td', class_='address')
-                            sender = address_cells[0].get_text(strip=True) if len(address_cells) > 0 else 'Unknown'
-                            receiver = address_cells[1].get_text(strip=True) if len(address_cells) > 1 else 'Unknown'
-
-                            timestamp = int(time.time())
-
                             transactions.append(Transaction(
                                 network='Venom',
-                                tx_hash=tx_hash,
+                                tx_hash=tx['id'],
                                 amount_usd=amount_usd,
                                 sender=sender,
                                 receiver=receiver,
-                                timestamp=timestamp,
+                                timestamp=tx['now'],
                                 amount_native=amount_venom
                             ))
 
