@@ -64,6 +64,7 @@ class TransactionMonitorBot:
         ]
 
         self.is_running = False
+        self.dashboard_counter = 0
 
     async def start(self):
         """Start the monitoring bot"""
@@ -76,7 +77,12 @@ class TransactionMonitorBot:
         await self.notifier.send_startup_message()
 
         self.is_running = True
-        await self.monitor_loop()
+
+        # Start dashboard task
+        dashboard_task = asyncio.create_task(self.dashboard_loop())
+        monitor_task = asyncio.create_task(self.monitor_loop())
+
+        await asyncio.gather(dashboard_task, monitor_task)
 
     async def monitor_loop(self):
         """Main monitoring loop"""
@@ -104,6 +110,24 @@ class TransactionMonitorBot:
 
             # Wait before next poll
             await asyncio.sleep(config.POLL_INTERVAL_SECONDS)
+
+    async def dashboard_loop(self):
+        """Dashboard update loop - sends every 60 seconds"""
+        while self.is_running:
+            try:
+                await asyncio.sleep(60)  # Wait 60 seconds
+
+                # Fetch last 5 transactions from each network
+                network_transactions = {}
+                for monitor in self.monitors:
+                    txs = await monitor.get_latest_transactions_any_amount(limit=5)
+                    network_transactions[monitor.network_name] = txs
+
+                # Send dashboard
+                await self.notifier.send_dashboard(network_transactions)
+
+            except Exception as e:
+                logger.error(f"Error in dashboard loop: {e}")
 
     async def stop(self):
         """Stop the monitoring bot"""

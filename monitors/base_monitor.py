@@ -64,3 +64,11 @@ class BaseMonitor(ABC):
         except Exception as e:
             logger.error(f"{self.network_name}: Error fetching transactions: {e}")
             return []
+
+    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
+        """
+        Fetch latest transactions regardless of amount.
+        Returns up to 'limit' most recent transactions.
+        """
+        # Default implementation - subclasses should override
+        return []

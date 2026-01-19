@@ -143,3 +143,99 @@ class TONMonitor(BaseMonitor):
 
         logger.info(f"TON: Found {len(transactions)} transactions above ${self.min_usd}")
         return transactions
+
+    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
+        """Fetch latest TON transactions regardless of amount"""
+        transactions = []
+        try:
+            ton_price = await self.get_current_price_usd()
+            if ton_price == 0:
+                return []
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{self.api_url}/getMasterchainInfo') as response:
+                    if response.status != 200:
+                        return []
+
+                    masterchain_data = await response.json()
+                    if not masterchain_data.get('ok'):
+                        return []
+
+                    last_block = masterchain_data['result']['last']
+                    seqno = last_block['seqno']
+
+                    for block_offset in range(5):
+                        if len(transactions) >= limit:
+                            break
+
+                        current_seqno = seqno - block_offset
+
+                        try:
+                            async with session.get(
+                                f'{self.api_url}/getBlockTransactions',
+                                params={'workchain': -1, 'shard': '-9223372036854775808', 'seqno': current_seqno}
+                            ) as block_response:
+                                if block_response.status != 200:
+                                    continue
+
+                                block_data = await block_response.json()
+                                if not block_data.get('ok'):
+                                    continue
+
+                                block_txs = block_data['result']['transactions']
+
+                                for tx_info in block_txs[:10]:
+                                    if len(transactions) >= limit:
+                                        break
+
+                                    try:
+                                        async with session.get(
+                                            f'{self.api_url}/getTransactions',
+                                            params={'address': tx_info['account'], 'limit': 1, 'lt': tx_info['lt'], 'hash': tx_info['hash']}
+                                        ) as tx_response:
+                                            if tx_response.status != 200:
+                                                continue
+
+                                            tx_data = await tx_response.json()
+                                            if not tx_data.get('ok') or not tx_data.get('result'):
+                                                continue
+
+                                            tx = tx_data['result'][0]
+
+                                            if tx.get('out_msgs'):
+                                                for out_msg in tx['out_msgs']:
+                                                    if len(transactions) >= limit:
+                                                        break
+
+                                                    value_nano = int(out_msg.get('value', 0))
+                                                    if value_nano == 0:
+                                                        continue
+
+                                                    value_ton = value_nano / 1e9
+                                                    value_usd = value_ton * ton_price
+
+                                                    tx_hash = tx.get('transaction_id', {}).get('hash', 'Unknown')
+                                                    sender = out_msg.get('source', 'Unknown')
+                                                    receiver = out_msg.get('destination', 'Unknown')
+                                                    timestamp = tx.get('utime', 0)
+
+                                                    transactions.append(Transaction(
+                                                        network='TON',
+                                                        tx_hash=tx_hash,
+                                                        amount_usd=value_usd,
+                                                        sender=sender,
+                                                        receiver=receiver,
+                                                        timestamp=timestamp,
+                                                        amount_native=value_ton
+                                                    ))
+
+                                    except Exception:
+                                        continue
+
+                        except Exception:
+                            continue
+
+        except Exception as e:
+            logger.debug(f"TON: Error fetching dashboard transactions: {e}")
+
+        return transactions[:limit]

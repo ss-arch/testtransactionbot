@@ -106,3 +106,8 @@ class HumanodeMonitor(BaseMonitor):
             logger.error(f"Humanode: Error fetching HUMO transactions: {e}")
 
         return transactions
+
+    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
+        """Fetch latest Humanode transactions regardless of amount"""
+        # Humanode Subscan API often unavailable, return empty for dashboard
+        return []

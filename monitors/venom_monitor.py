@@ -118,3 +118,8 @@ class VenomMonitor(BaseMonitor):
             logger.error(f"Venom: Error fetching transactions: {e}")
 
         return transactions
+
+    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
+        """Fetch latest Venom transactions regardless of amount"""
+        # Venom API often unavailable, return empty for dashboard
+        return []

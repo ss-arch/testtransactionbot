@@ -118,3 +118,37 @@ Poll interval: {config.POLL_INTERVAL_SECONDS}s
             )
         except Exception as e:
             logger.error(f"Failed to send error message: {e}")
+
+    async def send_dashboard(self, network_transactions: dict):
+        """Send dashboard with last 5 transactions per network"""
+        try:
+            message = "📊 <b>Transaction Dashboard</b>\n\n"
+
+            for network, transactions in network_transactions.items():
+                token_symbol = self._get_token_symbol(network)
+                message += f"<b>{network}</b>\n"
+
+                if not transactions:
+                    message += "  No recent transactions\n\n"
+                    continue
+
+                for tx in transactions[:5]:
+                    explorer_url = config.EXPLORERS.get(network, '')
+                    tx_link = f"{explorer_url}{tx.tx_hash}"
+                    amount_str = f"{tx.amount_native:,.4f} {token_symbol}"
+                    message += f"  • <a href=\"{tx_link}\">{amount_str}</a>\n"
+
+                message += "\n"
+
+            dt = datetime.now()
+            message += f"🕒 Updated: {dt.strftime('%H:%M:%S')}"
+
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=message.strip(),
+                parse_mode='HTML',
+                disable_web_page_preview=True
+            )
+            logger.info("Sent dashboard update")
+        except Exception as e:
+            logger.error(f"Failed to send dashboard: {e}")

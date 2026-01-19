@@ -112,3 +112,76 @@ class EverscaleMonitor(BaseMonitor):
             logger.error(f"Everscale: Error fetching transactions: {e}")
 
         return transactions
+
+    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
+        """Fetch latest Everscale transactions regardless of amount"""
+        transactions = []
+        try:
+            ever_price = await self.get_current_price_usd()
+            if ever_price == 0:
+                return []
+
+            async with aiohttp.ClientSession() as session:
+                query = """
+                query {
+                  transactions(
+                    orderBy: { path: "now", direction: DESC }
+                    limit: 10
+                  ) {
+                    id
+                    now
+                    out_messages {
+                      value
+                      dst
+                      src
+                    }
+                  }
+                }
+                """
+
+                async with session.post(f'{self.rpc_url}/graphql', json={'query': query}) as response:
+                    if response.status != 200:
+                        return []
+
+                    data = await response.json()
+                    txs = data.get('data', {}).get('transactions', [])
+
+                    for tx in txs:
+                        if len(transactions) >= limit:
+                            break
+
+                        try:
+                            tx_hash = tx.get('id', 'Unknown')
+                            timestamp = tx.get('now', 0)
+
+                            for msg in tx.get('out_messages', []):
+                                if len(transactions) >= limit:
+                                    break
+
+                                value_nano = int(msg.get('value', 0))
+                                if value_nano == 0:
+                                    continue
+
+                                value_ever = value_nano / 1e9
+                                value_usd = value_ever * ever_price
+
+                                sender = msg.get('src', 'Unknown')
+                                receiver = msg.get('dst', 'Unknown')
+
+                                transactions.append(Transaction(
+                                    network='Everscale',
+                                    tx_hash=tx_hash,
+                                    amount_usd=value_usd,
+                                    sender=sender,
+                                    receiver=receiver,
+                                    timestamp=timestamp,
+                                    amount_native=value_ever
+                                ))
+
+                        except Exception:
+                            continue
+
+        except Exception as e:
+            logger.debug(f"Everscale: Error fetching dashboard transactions: {e}")
+
+        return transactions[:limit]
