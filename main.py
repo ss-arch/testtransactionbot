@@ -42,33 +42,26 @@ class TransactionMonitorBot:
             chat_id=config.TELEGRAM_CHAT_ID
         )
 
-        # Initialize monitors
+        # Initialize monitors with network-specific token thresholds
         self.monitors: List[BaseMonitor] = [
-            TONMonitor(min_usd=config.MIN_TRANSACTION_USD),
-            EverscaleMonitor(min_usd=config.MIN_TRANSACTION_USD),
-            VenomMonitor(min_usd=config.MIN_TRANSACTION_USD)
+            TONMonitor(min_tokens=config.NETWORK_THRESHOLDS['TON']),
+            EverscaleMonitor(min_tokens=config.NETWORK_THRESHOLDS['Everscale']),
+            VenomMonitor(min_tokens=config.NETWORK_THRESHOLDS['Venom'])
         ]
 
         self.is_running = False
-        self.dashboard_counter = 0
 
     async def start(self):
         """Start the monitoring bot"""
         logger.info("Starting Transaction Monitor Bot...")
-        logger.info(f"Monitoring threshold: ${config.MIN_TRANSACTION_USD:,.0f}")
         logger.info(f"Poll interval: {config.POLL_INTERVAL_SECONDS} seconds")
-        logger.info(f"Networks: {', '.join([m.network_name for m in self.monitors])}")
+        logger.info(f"Network thresholds: {config.NETWORK_THRESHOLDS}")
 
         # Send startup notification
         await self.notifier.send_startup_message()
 
         self.is_running = True
-
-        # Start dashboard task
-        dashboard_task = asyncio.create_task(self.dashboard_loop())
-        monitor_task = asyncio.create_task(self.monitor_loop())
-
-        await asyncio.gather(dashboard_task, monitor_task)
+        await self.monitor_loop()
 
     async def monitor_loop(self):
         """Main monitoring loop"""
@@ -96,24 +89,6 @@ class TransactionMonitorBot:
 
             # Wait before next poll
             await asyncio.sleep(config.POLL_INTERVAL_SECONDS)
-
-    async def dashboard_loop(self):
-        """Dashboard update loop - sends every 5 minutes"""
-        while self.is_running:
-            try:
-                await asyncio.sleep(300)  # Wait 5 minutes
-
-                # Fetch last 5 transactions from each network
-                network_transactions = {}
-                for monitor in self.monitors:
-                    txs = await monitor.get_latest_transactions_any_amount(limit=5)
-                    network_transactions[monitor.network_name] = txs
-
-                # Send dashboard
-                await self.notifier.send_dashboard(network_transactions)
-
-            except Exception as e:
-                logger.error(f"Error in dashboard loop: {e}")
 
     async def stop(self):
         """Stop the monitoring bot"""

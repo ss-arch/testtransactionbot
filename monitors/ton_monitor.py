@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class TONMonitor(BaseMonitor):
-    def __init__(self, min_usd: float):
-        super().__init__('TON', min_usd)
+    def __init__(self, min_tokens: float):
+        super().__init__('TON', min_tokens)
         self.api_url = 'https://toncenter.com/api/v3'
         self.explorer_url = 'https://tonscan.org'
         self.price_cache = {'price': 0, 'timestamp': 0}
@@ -52,7 +52,6 @@ class TONMonitor(BaseMonitor):
         """Format TON address for display"""
         if not address:
             return 'Unknown'
-        # Clean up address format
         if ':' in address:
             return address
         return address[:16] + '...' if len(address) > 16 else address
@@ -62,9 +61,6 @@ class TONMonitor(BaseMonitor):
         transactions = []
         try:
             ton_price = await self.get_current_price_usd()
-            if ton_price == 0:
-                logger.warning("TON: Cannot fetch transactions without price data")
-                return []
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -84,78 +80,11 @@ class TONMonitor(BaseMonitor):
                             if not in_msg or not in_msg.get('value'):
                                 continue
 
-                            # Convert nano TON to TON
                             amount_ton = self._nano_to_ton(in_msg['value'])
-                            if amount_ton == 0:
+                            if amount_ton < self.min_tokens:
                                 continue
 
-                            amount_usd = amount_ton * ton_price
-
-                            if amount_usd >= self.min_usd:
-                                # Extract hash (decode from base64 to hex)
-                                tx_hash = tx['hash']
-
-                                transactions.append(Transaction(
-                                    network='TON',
-                                    tx_hash=tx_hash,
-                                    amount_usd=amount_usd,
-                                    sender=self._format_address(in_msg.get('source', 'Unknown')),
-                                    receiver=self._format_address(in_msg.get('destination', 'Unknown')),
-                                    timestamp=tx['now'],
-                                    amount_native=amount_ton
-                                ))
-
-                        except Exception as e:
-                            logger.debug(f"TON: Error parsing transaction: {e}")
-                            continue
-
-        except Exception as e:
-            logger.error(f"TON: Error fetching transactions: {e}")
-
-        logger.info(f"TON: Found {len(transactions)} transactions above ${self.min_usd}")
-        return transactions
-
-    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """Get latest TON transactions for dashboard, extending search up to 5 minutes"""
-        transactions = []
-        try:
-            ton_price = await self.get_current_price_usd()
-            if ton_price == 0:
-                return []
-
-            current_time = int(time.time())
-            min_time = current_time - 300  # 5 minutes ago
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f'{self.api_url}/transactions',
-                    params={'limit': 100, 'sort': 'desc'}
-                ) as response:
-                    if response.status != 200:
-                        return []
-
-                    data = await response.json()
-                    tx_list = data.get('transactions', [])
-
-                    for tx in tx_list:
-                        try:
-                            # Stop if we have enough transactions
-                            if len(transactions) >= limit:
-                                break
-
-                            # Skip transactions older than 5 minutes
-                            if tx['now'] < min_time:
-                                continue
-
-                            in_msg = tx.get('in_msg')
-                            if not in_msg or not in_msg.get('value'):
-                                continue
-
-                            amount_ton = self._nano_to_ton(in_msg['value'])
-                            if amount_ton == 0:
-                                continue
-
-                            amount_usd = amount_ton * ton_price
+                            amount_usd = amount_ton * ton_price if ton_price > 0 else 0
 
                             transactions.append(Transaction(
                                 network='TON',
@@ -167,10 +96,12 @@ class TONMonitor(BaseMonitor):
                                 amount_native=amount_ton
                             ))
 
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"TON: Error parsing transaction: {e}")
                             continue
 
         except Exception as e:
-            logger.debug(f"TON: Error fetching dashboard transactions: {e}")
+            logger.error(f"TON: Error fetching transactions: {e}")
 
-        return transactions[:limit]
+        logger.info(f"TON: Found {len(transactions)} transactions above {self.min_tokens} tokens")
+        return transactions

@@ -17,21 +17,21 @@ class Transaction:
         self.amount_native = amount_native
 
     def __repr__(self):
-        return f"Transaction({self.network}, {self.tx_hash}, ${self.amount_usd:,.2f})"
+        return f"Transaction({self.network}, {self.tx_hash}, {self.amount_native:,.2f} tokens)"
 
 
 class BaseMonitor(ABC):
-    def __init__(self, network_name: str, min_usd: float):
+    def __init__(self, network_name: str, min_tokens: float):
         self.network_name = network_name
-        self.min_usd = min_usd
+        self.min_tokens = min_tokens
         self.last_checked_block = None
         self.processed_txs = set()  # Track processed transaction hashes
 
     @abstractmethod
-    async def get_latest_transactions(self) -> List[Transaction]:
+    async def get_latest_transactions() -> List[Transaction]:
         """
         Fetch latest transactions from the network.
-        Returns list of Transaction objects that exceed min_usd threshold.
+        Returns list of Transaction objects that exceed min_tokens threshold.
         """
         pass
 
@@ -64,11 +64,3 @@ class BaseMonitor(ABC):
         except Exception as e:
             logger.error(f"{self.network_name}: Error fetching transactions: {e}")
             return []
-
-    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """
-        Fetch latest transactions regardless of amount.
-        Returns up to 'limit' most recent transactions.
-        """
-        # Default implementation - subclasses should override
-        return []

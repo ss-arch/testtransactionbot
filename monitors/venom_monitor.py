@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class VenomMonitor(BaseMonitor):
-    def __init__(self, min_usd: float):
-        super().__init__('Venom', min_usd)
+    def __init__(self, min_tokens: float):
+        super().__init__('Venom', min_tokens)
         self.graphql_url = 'https://gql.venom.foundation/graphql'
         self.explorer_url = 'https://venomscan.com'
         self.price_cache = {'price': 0, 'timestamp': 0}
@@ -44,7 +44,7 @@ class VenomMonitor(BaseMonitor):
             return 0
         try:
             value_nano = int(hex_value, 16)
-            return value_nano / 1_000_000_000  # Convert from nanoVENOM to VENOM
+            return value_nano / 1_000_000_000
         except Exception as e:
             logger.debug(f"Venom: Error converting hex {hex_value}: {e}")
             return 0
@@ -54,14 +54,11 @@ class VenomMonitor(BaseMonitor):
         transactions = []
         try:
             venom_price = await self.get_current_price_usd()
-            if venom_price == 0:
-                logger.warning("Venom: Cannot fetch transactions without price data")
-                return []
 
             query = """
             query {
                 transactions(
-                    limit: 50,
+                    limit: 100,
                     orderBy: {path: "now", direction: DESC}
                 ) {
                     id
@@ -96,23 +93,21 @@ class VenomMonitor(BaseMonitor):
                             if not in_msg or not in_msg.get('value'):
                                 continue
 
-                            # Convert hex value to VENOM
                             amount_venom = self._hex_to_decimal(in_msg['value'])
-                            if amount_venom == 0:
+                            if amount_venom < self.min_tokens:
                                 continue
 
-                            amount_usd = amount_venom * venom_price
+                            amount_usd = amount_venom * venom_price if venom_price > 0 else 0
 
-                            if amount_usd >= self.min_usd:
-                                transactions.append(Transaction(
-                                    network='Venom',
-                                    tx_hash=tx['id'],
-                                    amount_usd=amount_usd,
-                                    sender=in_msg.get('src', 'Unknown'),
-                                    receiver=in_msg.get('dst', 'Unknown'),
-                                    timestamp=tx['now'],
-                                    amount_native=amount_venom
-                                ))
+                            transactions.append(Transaction(
+                                network='Venom',
+                                tx_hash=tx['id'],
+                                amount_usd=amount_usd,
+                                sender=in_msg.get('src', 'Unknown'),
+                                receiver=in_msg.get('dst', 'Unknown'),
+                                timestamp=tx['now'],
+                                amount_native=amount_venom
+                            ))
 
                         except Exception as e:
                             logger.debug(f"Venom: Error parsing transaction: {e}")
@@ -121,94 +116,5 @@ class VenomMonitor(BaseMonitor):
         except Exception as e:
             logger.error(f"Venom: Error fetching transactions: {e}")
 
-        logger.info(f"Venom: Found {len(transactions)} transactions above ${self.min_usd}")
+        logger.info(f"Venom: Found {len(transactions)} transactions above {self.min_tokens} tokens")
         return transactions
-
-    async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """Get latest Venom transactions for dashboard, extending search up to 5 minutes"""
-        transactions = []
-        try:
-            venom_price = await self.get_current_price_usd()
-            if venom_price == 0:
-                return []
-
-            current_time = int(time.time())
-            min_time = current_time - 300  # 5 minutes ago
-
-            # Fetch more transactions to ensure we have enough within time range
-            query = """
-            query {
-                transactions(
-                    limit: 100,
-                    orderBy: {path: "now", direction: DESC}
-                ) {
-                    id
-                    now
-                    balance_delta
-                    account_addr
-                    in_message {
-                        value
-                        src
-                        dst
-                    }
-                }
-            }
-            """
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.graphql_url,
-                    json={'query': query},
-                    headers={'Content-Type': 'application/json'}
-                ) as response:
-                    if response.status != 200:
-                        return []
-
-                    data = await response.json()
-                    tx_list = data.get('data', {}).get('transactions', [])
-
-                    for tx in tx_list:
-                        try:
-                            # Stop if we have enough transactions
-                            if len(transactions) >= limit:
-                                break
-
-                            # Skip transactions older than 5 minutes
-                            if tx['now'] < min_time:
-                                continue
-
-                            in_msg = tx.get('in_message')
-                            if not in_msg or not in_msg.get('value'):
-                                # Use balance_delta if no in_message
-                                amount_venom = self._hex_to_decimal(tx.get('balance_delta', '0x0'))
-                                if amount_venom <= 0:
-                                    continue
-                                sender = 'Unknown'
-                                receiver = tx.get('account_addr', 'Unknown')
-                            else:
-                                amount_venom = self._hex_to_decimal(in_msg['value'])
-                                sender = in_msg.get('src', 'Unknown')
-                                receiver = in_msg.get('dst', 'Unknown')
-
-                            if amount_venom == 0:
-                                continue
-
-                            amount_usd = amount_venom * venom_price
-
-                            transactions.append(Transaction(
-                                network='Venom',
-                                tx_hash=tx['id'],
-                                amount_usd=amount_usd,
-                                sender=sender,
-                                receiver=receiver,
-                                timestamp=tx['now'],
-                                amount_native=amount_venom
-                            ))
-
-                        except Exception:
-                            continue
-
-        except Exception as e:
-            logger.debug(f"Venom: Error fetching dashboard transactions: {e}")
-
-        return transactions[:limit]

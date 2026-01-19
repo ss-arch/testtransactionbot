@@ -9,7 +9,13 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # Monitoring Configuration
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', 60))
-MIN_TRANSACTION_USD = float(os.getenv('MIN_TRANSACTION_USD', 100))  # Default: $100 USD
+
+# Network-specific token thresholds
+NETWORK_THRESHOLDS = {
+    'TON': 1000,  # 1,000 TON tokens
+    'Everscale': 100000,  # 100,000 EVER tokens
+    'Venom': 0  # Monitor all Venom transactions
+}
 
 # Explorer URLs (scraping sources)
 EXPLORERS = {
