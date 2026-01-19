@@ -125,17 +125,21 @@ class VenomMonitor(BaseMonitor):
         return transactions
 
     async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """Get latest Venom transactions for dashboard"""
+        """Get latest Venom transactions for dashboard, extending search up to 5 minutes"""
         transactions = []
         try:
             venom_price = await self.get_current_price_usd()
             if venom_price == 0:
                 return []
 
+            current_time = int(time.time())
+            min_time = current_time - 300  # 5 minutes ago
+
+            # Fetch more transactions to ensure we have enough within time range
             query = """
             query {
                 transactions(
-                    limit: %d,
+                    limit: 100,
                     orderBy: {path: "now", direction: DESC}
                 ) {
                     id
@@ -149,7 +153,7 @@ class VenomMonitor(BaseMonitor):
                     }
                 }
             }
-            """ % limit
+            """
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -165,6 +169,14 @@ class VenomMonitor(BaseMonitor):
 
                     for tx in tx_list:
                         try:
+                            # Stop if we have enough transactions
+                            if len(transactions) >= limit:
+                                break
+
+                            # Skip transactions older than 5 minutes
+                            if tx['now'] < min_time:
+                                continue
+
                             in_msg = tx.get('in_message')
                             if not in_msg or not in_msg.get('value'):
                                 # Use balance_delta if no in_message

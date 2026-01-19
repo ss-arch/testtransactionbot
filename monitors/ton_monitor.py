@@ -116,17 +116,20 @@ class TONMonitor(BaseMonitor):
         return transactions
 
     async def get_latest_transactions_any_amount(self, limit: int = 5) -> List[Transaction]:
-        """Get latest TON transactions for dashboard"""
+        """Get latest TON transactions for dashboard, extending search up to 5 minutes"""
         transactions = []
         try:
             ton_price = await self.get_current_price_usd()
             if ton_price == 0:
                 return []
 
+            current_time = int(time.time())
+            min_time = current_time - 300  # 5 minutes ago
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f'{self.api_url}/transactions',
-                    params={'limit': limit, 'sort': 'desc'}
+                    params={'limit': 100, 'sort': 'desc'}
                 ) as response:
                     if response.status != 200:
                         return []
@@ -136,6 +139,14 @@ class TONMonitor(BaseMonitor):
 
                     for tx in tx_list:
                         try:
+                            # Stop if we have enough transactions
+                            if len(transactions) >= limit:
+                                break
+
+                            # Skip transactions older than 5 minutes
+                            if tx['now'] < min_time:
+                                continue
+
                             in_msg = tx.get('in_msg')
                             if not in_msg or not in_msg.get('value'):
                                 continue
