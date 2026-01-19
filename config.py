@@ -14,7 +14,7 @@ POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', 60))
 NETWORK_THRESHOLDS = {
     'TON': 1000,  # 1,000 TON tokens
     'Everscale': 100000,  # 100,000 EVER tokens
-    'Venom': 0  # Monitor all Venom transactions
+    'Venom': 100000  # 100,000 VENOM tokens
 }
 
 # Explorer URLs (scraping sources)
