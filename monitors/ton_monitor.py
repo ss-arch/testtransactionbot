@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class TONMonitor(BaseMonitor):
     def __init__(self, min_usd: float):
         super().__init__('TON', min_usd)
-        self.api_url = 'https://toncenter.com/api/v2'
+        self.api_url = 'https://toncenter.com/api/v3'
         self.explorer_url = 'https://tonscan.org'
         self.price_cache = {'price': 0, 'timestamp': 0}
 
@@ -38,8 +38,27 @@ class TONMonitor(BaseMonitor):
             logger.error(f"TON: Error getting price: {e}")
             return self.price_cache.get('price', 0)
 
+    def _nano_to_ton(self, nano_value: str) -> float:
+        """Convert nano TON to TON"""
+        try:
+            if not nano_value:
+                return 0
+            return int(nano_value) / 1_000_000_000
+        except Exception as e:
+            logger.debug(f"TON: Error converting nano value {nano_value}: {e}")
+            return 0
+
+    def _format_address(self, address: str) -> str:
+        """Format TON address for display"""
+        if not address:
+            return 'Unknown'
+        # Clean up address format
+        if ':' in address:
+            return address
+        return address[:16] + '...' if len(address) > 16 else address
+
     async def get_latest_transactions(self) -> List[Transaction]:
-        """Get latest TON transactions using TonCenter API"""
+        """Get latest TON transactions using TonCenter API v3"""
         transactions = []
         try:
             ton_price = await self.get_current_price_usd()
@@ -47,25 +66,48 @@ class TONMonitor(BaseMonitor):
                 logger.warning("TON: Cannot fetch transactions without price data")
                 return []
 
-            # Get recent transactions from multiple well-known addresses
-            # This is a workaround since TonCenter doesn't have a "latest transactions" endpoint
             async with aiohttp.ClientSession() as session:
-                # Query the latest masterchain block to get recent transactions
                 async with session.get(
-                    f'{self.api_url}/getMasterchainInfo'
+                    f'{self.api_url}/transactions',
+                    params={'limit': 50, 'sort': 'desc'}
                 ) as response:
                     if response.status != 200:
                         logger.warning(f"TON: API returned status {response.status}")
                         return []
 
                     data = await response.json()
-                    if not data.get('ok'):
-                        return []
+                    tx_list = data.get('transactions', [])
 
-                    # Get transactions from the latest block
-                    # Note: TonCenter API is limited - we can only get transactions for specific addresses
-                    # For a real implementation, you might need to use TON indexer services
-                    logger.debug("TON: TonCenter API has limitations for fetching recent transactions")
+                    for tx in tx_list:
+                        try:
+                            in_msg = tx.get('in_msg')
+                            if not in_msg or not in_msg.get('value'):
+                                continue
+
+                            # Convert nano TON to TON
+                            amount_ton = self._nano_to_ton(in_msg['value'])
+                            if amount_ton == 0:
+                                continue
+
+                            amount_usd = amount_ton * ton_price
+
+                            if amount_usd >= self.min_usd:
+                                # Extract hash (decode from base64 to hex)
+                                tx_hash = tx['hash']
+
+                                transactions.append(Transaction(
+                                    network='TON',
+                                    tx_hash=tx_hash,
+                                    amount_usd=amount_usd,
+                                    sender=self._format_address(in_msg.get('source', 'Unknown')),
+                                    receiver=self._format_address(in_msg.get('destination', 'Unknown')),
+                                    timestamp=tx['now'],
+                                    amount_native=amount_ton
+                                ))
+
+                        except Exception as e:
+                            logger.debug(f"TON: Error parsing transaction: {e}")
+                            continue
 
         except Exception as e:
             logger.error(f"TON: Error fetching transactions: {e}")
@@ -81,9 +123,41 @@ class TONMonitor(BaseMonitor):
             if ton_price == 0:
                 return []
 
-            # TonCenter API limitation: we need specific addresses to query
-            # This is a placeholder implementation
-            # For production, consider using TON indexer services or API services like tonapi.io
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f'{self.api_url}/transactions',
+                    params={'limit': limit, 'sort': 'desc'}
+                ) as response:
+                    if response.status != 200:
+                        return []
+
+                    data = await response.json()
+                    tx_list = data.get('transactions', [])
+
+                    for tx in tx_list:
+                        try:
+                            in_msg = tx.get('in_msg')
+                            if not in_msg or not in_msg.get('value'):
+                                continue
+
+                            amount_ton = self._nano_to_ton(in_msg['value'])
+                            if amount_ton == 0:
+                                continue
+
+                            amount_usd = amount_ton * ton_price
+
+                            transactions.append(Transaction(
+                                network='TON',
+                                tx_hash=tx['hash'],
+                                amount_usd=amount_usd,
+                                sender=self._format_address(in_msg.get('source', 'Unknown')),
+                                receiver=self._format_address(in_msg.get('destination', 'Unknown')),
+                                timestamp=tx['now'],
+                                amount_native=amount_ton
+                            ))
+
+                        except Exception:
+                            continue
 
         except Exception as e:
             logger.debug(f"TON: Error fetching dashboard transactions: {e}")
