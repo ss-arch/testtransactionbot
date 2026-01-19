@@ -9,7 +9,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # Monitoring Configuration
 POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', 60))
-MIN_TRANSACTION_USD = float(os.getenv('MIN_TRANSACTION_USD', 100000))
+MIN_TRANSACTION_USD = float(os.getenv('MIN_TRANSACTION_USD', 100))  # Default: $100 USD
 
 # API Configuration
 TON_API_KEY = os.getenv('TON_API_KEY', '')

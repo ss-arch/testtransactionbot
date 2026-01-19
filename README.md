@@ -1,6 +1,6 @@
 # Multi-Network Transaction Monitor Bot
 
-A Telegram bot that monitors large transactions (above $100,000) across multiple blockchain networks: TON, Everscale, Venom, and Humanode (HUMO token).
+A Telegram bot that monitors large transactions across multiple blockchain networks: TON, Everscale, Venom, and Humanode (HUMO token). Configurable threshold (default: $100).
 
 ## Features
 
@@ -61,8 +61,8 @@ TELEGRAM_CHAT_ID=your_chat_id_here
 
 ```env
 # Monitoring settings
-POLL_INTERVAL_SECONDS=60          # How often to check for new transactions
-MIN_TRANSACTION_USD=100000        # Minimum transaction value to alert (in USD)
+POLL_INTERVAL_SECONDS=60          # How often to check for new transactions (default: 60)
+MIN_TRANSACTION_USD=100           # Minimum transaction value to alert in USD (default: 100)
 
 # API Keys (optional but recommended for better rate limits)
 TON_API_KEY=your_ton_api_key      # Get from https://tonconsole.com/
@@ -178,9 +178,10 @@ When a large transaction is detected, you'll receive a message like:
 - Check that `TELEGRAM_CHAT_ID` is correct
 
 ### No transactions detected
-- Large transactions ($100k+) are rare, be patient
-- Lower the `MIN_TRANSACTION_USD` threshold for testing
+- Transactions above your threshold may be rare, be patient
+- Lower the `MIN_TRANSACTION_USD` threshold for testing (e.g., set to 1 for testing)
 - Check logs for any API errors
+- Default threshold is $100 USD
 
 ### API Errors
 - TON: Get an API key from https://tonconsole.com/
