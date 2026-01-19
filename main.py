@@ -98,10 +98,10 @@ class TransactionMonitorBot:
             await asyncio.sleep(config.POLL_INTERVAL_SECONDS)
 
     async def dashboard_loop(self):
-        """Dashboard update loop - sends every 60 seconds"""
+        """Dashboard update loop - sends every 5 minutes"""
         while self.is_running:
             try:
-                await asyncio.sleep(60)  # Wait 60 seconds
+                await asyncio.sleep(300)  # Wait 5 minutes
 
                 # Fetch last 5 transactions from each network
                 network_transactions = {}
