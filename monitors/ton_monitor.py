@@ -3,6 +3,7 @@ from typing import List
 import logging
 from .base_monitor import BaseMonitor, Transaction
 import time
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class TONMonitor(BaseMonitor):
         self.api_url = 'https://toncenter.com/api/v3'
         self.explorer_url = 'https://tonscan.org'
         self.price_cache = {'price': 0, 'timestamp': 0}
+        self.elector_addresses = config.ELECTOR_ADDRESSES.get('TON', [])
 
     async def get_current_price_usd(self) -> float:
         """Get TON price in USD from CoinGecko"""
@@ -56,6 +58,15 @@ class TONMonitor(BaseMonitor):
             return address
         return address[:16] + '...' if len(address) > 16 else address
 
+    def _is_elector_transaction(self, sender: str, receiver: str) -> bool:
+        """Check if transaction involves elector contract"""
+        for elector_addr in self.elector_addresses:
+            if sender and elector_addr in sender:
+                return True
+            if receiver and elector_addr in receiver:
+                return True
+        return False
+
     async def get_latest_transactions(self) -> List[Transaction]:
         """Get latest TON transactions using TonCenter API v3"""
         transactions = []
@@ -81,7 +92,15 @@ class TONMonitor(BaseMonitor):
                                 continue
 
                             amount_ton = self._nano_to_ton(in_msg['value'])
-                            if amount_ton < self.min_tokens:
+                            if amount_ton == 0:
+                                continue
+
+                            sender = in_msg.get('source', 'Unknown')
+                            receiver = in_msg.get('destination', 'Unknown')
+
+                            # Skip elector transactions
+                            if self._is_elector_transaction(sender, receiver):
+                                logger.debug(f"TON: Skipping elector transaction {tx['hash']}")
                                 continue
 
                             amount_usd = amount_ton * ton_price if ton_price > 0 else 0
@@ -90,8 +109,8 @@ class TONMonitor(BaseMonitor):
                                 network='TON',
                                 tx_hash=tx['hash'],
                                 amount_usd=amount_usd,
-                                sender=self._format_address(in_msg.get('source', 'Unknown')),
-                                receiver=self._format_address(in_msg.get('destination', 'Unknown')),
+                                sender=self._format_address(sender),
+                                receiver=self._format_address(receiver),
                                 timestamp=tx['now'],
                                 amount_native=amount_ton
                             ))
@@ -103,5 +122,4 @@ class TONMonitor(BaseMonitor):
         except Exception as e:
             logger.error(f"TON: Error fetching transactions: {e}")
 
-        logger.info(f"TON: Found {len(transactions)} transactions above {self.min_tokens} tokens")
         return transactions

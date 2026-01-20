@@ -3,6 +3,7 @@ from typing import List
 import logging
 from .base_monitor import BaseMonitor, Transaction
 import time
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class EverscaleMonitor(BaseMonitor):
         self.graphql_url = 'https://mainnet.evercloud.dev/89a3b8f46e484c2a8afc86f1fac08ccb/graphql'
         self.explorer_url = 'https://everscan.io'
         self.price_cache = {'price': 0, 'timestamp': 0}
+        self.elector_addresses = config.ELECTOR_ADDRESSES.get('Everscale', [])
 
     async def get_current_price_usd(self) -> float:
         """Get EVER price in USD from CoinGecko"""
@@ -48,6 +50,15 @@ class EverscaleMonitor(BaseMonitor):
         except Exception as e:
             logger.debug(f"Everscale: Error converting hex {hex_value}: {e}")
             return 0
+
+    def _is_elector_transaction(self, sender: str, receiver: str) -> bool:
+        """Check if transaction involves elector contract"""
+        for elector_addr in self.elector_addresses:
+            if sender and elector_addr in sender:
+                return True
+            if receiver and elector_addr in receiver:
+                return True
+        return False
 
     async def get_latest_transactions(self) -> List[Transaction]:
         """Get latest Everscale transactions using GraphQL API"""
@@ -94,7 +105,15 @@ class EverscaleMonitor(BaseMonitor):
                                 continue
 
                             amount_ever = self._hex_to_decimal(in_msg['value'])
-                            if amount_ever < self.min_tokens:
+                            if amount_ever == 0:
+                                continue
+
+                            sender = in_msg.get('src', 'Unknown')
+                            receiver = in_msg.get('dst', 'Unknown')
+
+                            # Skip elector transactions
+                            if self._is_elector_transaction(sender, receiver):
+                                logger.debug(f"Everscale: Skipping elector transaction {tx['id']}")
                                 continue
 
                             amount_usd = amount_ever * ever_price if ever_price > 0 else 0
@@ -103,8 +122,8 @@ class EverscaleMonitor(BaseMonitor):
                                 network='Everscale',
                                 tx_hash=tx['id'],
                                 amount_usd=amount_usd,
-                                sender=in_msg.get('src', 'Unknown'),
-                                receiver=in_msg.get('dst', 'Unknown'),
+                                sender=sender,
+                                receiver=receiver,
                                 timestamp=tx['now'],
                                 amount_native=amount_ever
                             ))
@@ -116,5 +135,4 @@ class EverscaleMonitor(BaseMonitor):
         except Exception as e:
             logger.error(f"Everscale: Error fetching transactions: {e}")
 
-        logger.info(f"Everscale: Found {len(transactions)} transactions above {self.min_tokens} tokens")
         return transactions

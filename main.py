@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Multi-Network Transaction Monitor Bot
-Monitors TON, Everscale, Venom, and Humanode networks for large transactions
+Monitors TON, Everscale, Venom networks for large transactions
 """
 
 import asyncio
@@ -10,13 +10,13 @@ import sys
 from typing import List
 
 import config
-from telegram_bot import TelegramNotifier
+from telegram.ext import Application
+from telegram_bot import TelegramNotifier, setup_handlers, get_threshold
 from monitors import (
     TONMonitor,
     EverscaleMonitor,
     VenomMonitor,
     BaseMonitor,
-    Transaction
 )
 
 # Configure logging
@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 class TransactionMonitorBot:
     def __init__(self):
-        # Validate configuration
         if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
             raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env file")
 
@@ -42,20 +41,30 @@ class TransactionMonitorBot:
             chat_id=config.TELEGRAM_CHAT_ID
         )
 
-        # Initialize monitors with network-specific token thresholds
+        # Initialize monitors (thresholds checked at runtime)
         self.monitors: List[BaseMonitor] = [
-            TONMonitor(min_tokens=config.NETWORK_THRESHOLDS['TON']),
-            EverscaleMonitor(min_tokens=config.NETWORK_THRESHOLDS['Everscale']),
-            VenomMonitor(min_tokens=config.NETWORK_THRESHOLDS['Venom'])
+            TONMonitor(min_tokens=0),
+            EverscaleMonitor(min_tokens=0),
+            VenomMonitor(min_tokens=0)
         ]
 
         self.is_running = False
+        self.application = None
 
     async def start(self):
-        """Start the monitoring bot"""
+        """Start the monitoring bot with command handlers"""
         logger.info("Starting Transaction Monitor Bot...")
         logger.info(f"Poll interval: {config.POLL_INTERVAL_SECONDS} seconds")
-        logger.info(f"Network thresholds: {config.NETWORK_THRESHOLDS}")
+        logger.info(f"Default thresholds: {config.NETWORK_THRESHOLDS}")
+
+        # Build application with command handlers
+        self.application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+        setup_handlers(self.application)
+
+        # Initialize application
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.updater.start_polling(drop_pending_updates=True)
 
         # Send startup notification
         await self.notifier.send_startup_message()
@@ -67,33 +76,43 @@ class TransactionMonitorBot:
         """Main monitoring loop"""
         while self.is_running:
             try:
-                # Fetch transactions from all monitors concurrently
-                tasks = [monitor.fetch_and_filter() for monitor in self.monitors]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Check transactions for each network with current runtime thresholds
+                for monitor in self.monitors:
+                    try:
+                        threshold = get_threshold(monitor.network_name)
+                        transactions = await monitor.get_latest_transactions()
 
-                # Process results
-                for result in results:
-                    if isinstance(result, Exception):
-                        logger.error(f"Monitor error: {result}")
-                        continue
+                        # Filter by current runtime threshold
+                        filtered = [tx for tx in transactions if tx.amount_native >= threshold]
 
-                    # Send notifications for each transaction
-                    for tx in result:
-                        await self.notifier.send_transaction_alert(tx)
-                        # Small delay between notifications to avoid rate limiting
-                        await asyncio.sleep(0.5)
+                        # Filter new transactions
+                        new_txs = monitor.filter_new_transactions(filtered)
+
+                        if new_txs:
+                            logger.info(f"{monitor.network_name}: Found {len(new_txs)} new transactions above {threshold} tokens")
+                            for tx in new_txs:
+                                await self.notifier.send_transaction_alert(tx)
+                                await asyncio.sleep(0.5)
+                        else:
+                            logger.info(f"{monitor.network_name}: Found 0 transactions above {threshold} tokens")
+
+                    except Exception as e:
+                        logger.error(f"{monitor.network_name} error: {e}")
 
             except Exception as e:
                 logger.error(f"Error in monitor loop: {e}")
                 await self.notifier.send_error_message(str(e))
 
-            # Wait before next poll
             await asyncio.sleep(config.POLL_INTERVAL_SECONDS)
 
     async def stop(self):
         """Stop the monitoring bot"""
         logger.info("Stopping Transaction Monitor Bot...")
         self.is_running = False
+        if self.application:
+            await self.application.updater.stop()
+            await self.application.stop()
+            await self.application.shutdown()
 
 
 async def main():

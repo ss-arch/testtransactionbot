@@ -40,27 +40,16 @@ class BaseMonitor(ABC):
         """Get current token price in USD"""
         pass
 
-    def is_duplicate(self, tx_hash: str) -> bool:
-        """Check if transaction has already been processed"""
-        if tx_hash in self.processed_txs:
-            return True
-        self.processed_txs.add(tx_hash)
+    def filter_new_transactions(self, transactions: List[Transaction]) -> List[Transaction]:
+        """Filter out already processed transactions"""
+        new_txs = []
+        for tx in transactions:
+            if tx.tx_hash not in self.processed_txs:
+                self.processed_txs.add(tx.tx_hash)
+                new_txs.append(tx)
 
         # Keep only last 1000 transactions to avoid memory issues
         if len(self.processed_txs) > 1000:
             self.processed_txs = set(list(self.processed_txs)[-1000:])
 
-        return False
-
-    async def fetch_and_filter(self) -> List[Transaction]:
-        """Fetch transactions and filter duplicates"""
-        try:
-            transactions = await self.get_latest_transactions()
-            # Filter out duplicates
-            new_transactions = [tx for tx in transactions if not self.is_duplicate(tx.tx_hash)]
-            if new_transactions:
-                logger.info(f"{self.network_name}: Found {len(new_transactions)} new large transactions")
-            return new_transactions
-        except Exception as e:
-            logger.error(f"{self.network_name}: Error fetching transactions: {e}")
-            return []
+        return new_txs

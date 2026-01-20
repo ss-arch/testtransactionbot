@@ -12,9 +12,23 @@ POLL_INTERVAL_SECONDS = int(os.getenv('POLL_INTERVAL_SECONDS', 60))
 
 # Network-specific token thresholds
 NETWORK_THRESHOLDS = {
-    'TON': 1000,  # 1,000 TON tokens
+    'TON': 10000,  # 10,000 TON tokens
     'Everscale': 100000,  # 100,000 EVER tokens
     'Venom': 100000  # 100,000 VENOM tokens
+}
+
+# Elector contract addresses to exclude (validator stake transactions)
+ELECTOR_ADDRESSES = {
+    'TON': [
+        '-1:3333333333333333333333333333333333333333333333333333333333333333',
+        'Ef8zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM0vF',  # Base64 format
+    ],
+    'Everscale': [
+        '-1:3333333333333333333333333333333333333333333333333333333333333333',
+    ],
+    'Venom': [
+        '-1:3333333333333333333333333333333333333333333333333333333333333333',
+    ]
 }
 
 # Explorer URLs (scraping sources)

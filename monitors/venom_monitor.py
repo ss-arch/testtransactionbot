@@ -3,6 +3,7 @@ from typing import List
 import logging
 from .base_monitor import BaseMonitor, Transaction
 import time
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class VenomMonitor(BaseMonitor):
         self.graphql_url = 'https://gql.venom.foundation/graphql'
         self.explorer_url = 'https://venomscan.com'
         self.price_cache = {'price': 0, 'timestamp': 0}
+        self.elector_addresses = config.ELECTOR_ADDRESSES.get('Venom', [])
 
     async def get_current_price_usd(self) -> float:
         """Get VENOM price in USD from CoinGecko"""
@@ -48,6 +50,15 @@ class VenomMonitor(BaseMonitor):
         except Exception as e:
             logger.debug(f"Venom: Error converting hex {hex_value}: {e}")
             return 0
+
+    def _is_elector_transaction(self, sender: str, receiver: str) -> bool:
+        """Check if transaction involves elector contract"""
+        for elector_addr in self.elector_addresses:
+            if sender and elector_addr in sender:
+                return True
+            if receiver and elector_addr in receiver:
+                return True
+        return False
 
     async def get_latest_transactions(self) -> List[Transaction]:
         """Get latest Venom transactions using GraphQL API"""
@@ -94,7 +105,15 @@ class VenomMonitor(BaseMonitor):
                                 continue
 
                             amount_venom = self._hex_to_decimal(in_msg['value'])
-                            if amount_venom < self.min_tokens:
+                            if amount_venom == 0:
+                                continue
+
+                            sender = in_msg.get('src', 'Unknown')
+                            receiver = in_msg.get('dst', 'Unknown')
+
+                            # Skip elector transactions
+                            if self._is_elector_transaction(sender, receiver):
+                                logger.debug(f"Venom: Skipping elector transaction {tx['id']}")
                                 continue
 
                             amount_usd = amount_venom * venom_price if venom_price > 0 else 0
@@ -103,8 +122,8 @@ class VenomMonitor(BaseMonitor):
                                 network='Venom',
                                 tx_hash=tx['id'],
                                 amount_usd=amount_usd,
-                                sender=in_msg.get('src', 'Unknown'),
-                                receiver=in_msg.get('dst', 'Unknown'),
+                                sender=sender,
+                                receiver=receiver,
                                 timestamp=tx['now'],
                                 amount_native=amount_venom
                             ))
@@ -116,5 +135,4 @@ class VenomMonitor(BaseMonitor):
         except Exception as e:
             logger.error(f"Venom: Error fetching transactions: {e}")
 
-        logger.info(f"Venom: Found {len(transactions)} transactions above {self.min_tokens} tokens")
         return transactions

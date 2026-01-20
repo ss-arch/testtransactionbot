@@ -1,6 +1,6 @@
-import asyncio
 import logging
-from telegram import Bot
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.error import TelegramError
 from datetime import datetime
 from monitors import Transaction
@@ -8,27 +8,40 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# Runtime thresholds (can be changed via commands)
+runtime_thresholds = dict(config.NETWORK_THRESHOLDS)
+
+
+def get_threshold(network: str) -> float:
+    """Get current threshold for network"""
+    return runtime_thresholds.get(network, 0)
+
+
+def set_threshold(network: str, value: float) -> bool:
+    """Set threshold for network"""
+    if network in runtime_thresholds:
+        runtime_thresholds[network] = value
+        return True
+    return False
+
 
 class TelegramNotifier:
     def __init__(self, bot_token: str, chat_id: str):
         self.bot = Bot(token=bot_token)
         self.chat_id = chat_id
+        self.bot_token = bot_token
 
     def format_transaction_message(self, tx: Transaction) -> str:
         """Format transaction details into a readable message"""
-        # Format timestamp
         dt = datetime.fromtimestamp(tx.timestamp)
         time_str = dt.strftime('%Y-%m-%d %H:%M:%S UTC')
 
-        # Format addresses (shorten for readability)
         sender_short = self._shorten_address(tx.sender)
         receiver_short = self._shorten_address(tx.receiver)
 
-        # Get explorer URL
         explorer_info = config.EXPLORERS.get(tx.network, {})
         explorer_link = f"{explorer_info.get('tx', '')}{tx.tx_hash}"
 
-        # Build message
         message = f"""
 🚨 <b>Large Transaction Detected!</b>
 
@@ -49,19 +62,16 @@ class TelegramNotifier:
         return message.strip()
 
     def _shorten_address(self, address: str) -> str:
-        """Shorten address for display"""
         if len(address) > 16:
             return f"{address[:8]}...{address[-8:]}"
         return address
 
     def _shorten_hash(self, tx_hash: str) -> str:
-        """Shorten transaction hash for display"""
         if len(tx_hash) > 16:
             return f"{tx_hash[:12]}...{tx_hash[-12:]}"
         return tx_hash
 
     def _get_token_symbol(self, network: str) -> str:
-        """Get token symbol for network"""
         symbols = {
             'TON': 'TON',
             'Everscale': 'EVER',
@@ -70,7 +80,6 @@ class TelegramNotifier:
         return symbols.get(network, 'TOKEN')
 
     async def send_transaction_alert(self, tx: Transaction):
-        """Send transaction alert to Telegram"""
         try:
             message = self.format_transaction_message(tx)
             await self.bot.send_message(
@@ -86,14 +95,21 @@ class TelegramNotifier:
             logger.error(f"Unexpected error sending Telegram message: {e}")
 
     async def send_startup_message(self):
-        """Send bot startup notification"""
         try:
+            thresholds = '\n'.join([
+                f"  • {network}: {threshold:,.0f} tokens"
+                for network, threshold in runtime_thresholds.items()
+            ])
             message = f"""
 🤖 <b>Transaction Monitor Bot Started</b>
 
 Monitoring networks: TON, Everscale, Venom
-Alert threshold: ${config.MIN_TRANSACTION_USD:,.0f}
-Poll interval: {config.POLL_INTERVAL_SECONDS}s
+Token thresholds:
+{thresholds}
+
+Commands:
+/thresholds - view current thresholds
+/threshold [network] [value] - set threshold
 
 ✅ Bot is now active and monitoring...
 """
@@ -107,7 +123,6 @@ Poll interval: {config.POLL_INTERVAL_SECONDS}s
             logger.error(f"Failed to send startup message: {e}")
 
     async def send_error_message(self, error_msg: str):
-        """Send error notification"""
         try:
             message = f"⚠️ <b>Error:</b> {error_msg}"
             await self.bot.send_message(
@@ -118,36 +133,88 @@ Poll interval: {config.POLL_INTERVAL_SECONDS}s
         except Exception as e:
             logger.error(f"Failed to send error message: {e}")
 
-    async def send_dashboard(self, network_transactions: dict):
-        """Send dashboard with last 5 transactions per network"""
-        try:
-            message = "📊 <b>Transaction Dashboard</b>\n\n"
 
-            for network, transactions in network_transactions.items():
-                token_symbol = self._get_token_symbol(network)
-                message += f"<b>{network}</b>\n"
+async def thresholds_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current thresholds"""
+    thresholds = '\n'.join([
+        f"  • {network}: {threshold:,.0f} tokens"
+        for network, threshold in runtime_thresholds.items()
+    ])
+    message = f"""
+📊 <b>Current Thresholds</b>
 
-                if not transactions:
-                    message += "  No recent transactions\n\n"
-                    continue
+{thresholds}
 
-                for tx in transactions[:5]:
-                    explorer_info = config.EXPLORERS.get(network, {})
-                    tx_link = f"{explorer_info.get('tx', '')}{tx.tx_hash}"
-                    amount_str = f"{tx.amount_native:,.4f} {token_symbol}"
-                    message += f"  • <a href=\"{tx_link}\">{amount_str}</a>\n"
+To change: /threshold [network] [value]
+Example: /threshold TON 5000
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
 
-                message += "\n"
 
-            dt = datetime.now()
-            message += f"🕒 Updated: {dt.strftime('%H:%M:%S')}"
+async def threshold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set threshold for a network"""
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /threshold [network] [value]\n"
+            "Networks: TON, Everscale, Venom\n"
+            "Example: /threshold TON 5000"
+        )
+        return
 
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=message.strip(),
-                parse_mode='HTML',
-                disable_web_page_preview=True
-            )
-            logger.info("Sent dashboard update")
-        except Exception as e:
-            logger.error(f"Failed to send dashboard: {e}")
+    network = context.args[0]
+    network_map = {
+        'ton': 'TON',
+        'everscale': 'Everscale',
+        'ever': 'Everscale',
+        'venom': 'Venom'
+    }
+    network = network_map.get(network.lower(), network)
+
+    try:
+        value = float(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Invalid value. Please enter a number.")
+        return
+
+    if value < 0:
+        await update.message.reply_text("Threshold must be a positive number.")
+        return
+
+    if set_threshold(network, value):
+        await update.message.reply_text(
+            f"✅ {network} threshold set to {value:,.0f} tokens",
+            parse_mode='HTML'
+        )
+        logger.info(f"Threshold changed: {network} = {value}")
+    else:
+        await update.message.reply_text(
+            f"Unknown network: {network}\n"
+            "Available networks: TON, Everscale, Venom"
+        )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show help message"""
+    message = """
+🤖 <b>Transaction Monitor Bot</b>
+
+Commands:
+/thresholds - view current thresholds
+/threshold [network] [value] - set threshold
+/help - show this message
+
+Networks: TON, Everscale, Venom
+
+Example:
+/threshold TON 5000
+/threshold Everscale 50000
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+
+
+def setup_handlers(application: Application):
+    """Setup command handlers"""
+    application.add_handler(CommandHandler("thresholds", thresholds_command))
+    application.add_handler(CommandHandler("threshold", threshold_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("start", help_command))
