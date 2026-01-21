@@ -13,7 +13,7 @@ class UserSettings:
     """Settings for a single user"""
     def __init__(self, chat_id: str):
         self.chat_id = chat_id
-        self.enabled = True
+        self.enabled = False  # Disabled by default, user must /start
         self.thresholds = dict(config.NETWORK_THRESHOLDS)
 
 
@@ -166,14 +166,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for network, threshold in user.thresholds.items()
     ])
     message = f"""
-✅ <b>Monitoring Started</b>
+🤖 <b>Transaction Monitor Bot</b>
 
-Networks: TON, Everscale, Venom
-Your thresholds:
+✅ Monitoring started!
+
+<b>Networks:</b> TON, Everscale, Venom
+
+<b>Your thresholds:</b>
 {thresholds}
 
-Use /stop to pause monitoring.
-Use /threshold to change thresholds.
+<b>Commands:</b>
+/start - start monitoring
+/stop - stop monitoring
+/status - show your status
+/thresholds - view your thresholds
+/threshold [network] [value] - set threshold
+/help - show this message
+
+<b>Example:</b>
+/threshold TON 5000
+/threshold Everscale 50000
 """
     await update.message.reply_text(message.strip(), parse_mode='HTML')
     logger.info(f"User {chat_id} started monitoring")
