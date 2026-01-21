@@ -11,7 +11,7 @@ from typing import List
 
 import config
 from telegram.ext import Application
-from telegram_bot import TelegramNotifier, setup_handlers, get_threshold, is_monitoring_enabled
+from telegram_bot import TelegramNotifier, setup_handlers, get_user_manager
 from monitors import (
     TONMonitor,
     EverscaleMonitor,
@@ -41,7 +41,7 @@ class TransactionMonitorBot:
             chat_id=config.TELEGRAM_CHAT_ID
         )
 
-        # Initialize monitors (thresholds checked at runtime)
+        # Initialize monitors (fetch all transactions, filter per-user)
         self.monitors: List[BaseMonitor] = [
             TONMonitor(min_tokens=0),
             EverscaleMonitor(min_tokens=0),
@@ -66,7 +66,7 @@ class TransactionMonitorBot:
         await self.application.start()
         await self.application.updater.start_polling(drop_pending_updates=True)
 
-        # Send startup notification
+        # Send startup notification to admin
         await self.notifier.send_startup_message()
 
         self.is_running = True
@@ -74,35 +74,33 @@ class TransactionMonitorBot:
 
     async def monitor_loop(self):
         """Main monitoring loop"""
+        user_manager = get_user_manager()
+
         while self.is_running:
             try:
-                # Skip if monitoring is disabled
-                if not is_monitoring_enabled():
-                    await asyncio.sleep(config.POLL_INTERVAL_SECONDS)
-                    continue
-
-                # Check transactions for each network with current runtime thresholds
+                # Fetch transactions from all networks
+                all_transactions = {}
                 for monitor in self.monitors:
                     try:
-                        threshold = get_threshold(monitor.network_name)
                         transactions = await monitor.get_latest_transactions()
-
-                        # Filter by current runtime threshold
-                        filtered = [tx for tx in transactions if tx.amount_native >= threshold]
-
-                        # Filter new transactions
-                        new_txs = monitor.filter_new_transactions(filtered)
-
+                        # Filter new transactions (not seen before)
+                        new_txs = monitor.filter_new_transactions(transactions)
                         if new_txs:
-                            logger.info(f"{monitor.network_name}: Found {len(new_txs)} new transactions above {threshold} tokens")
-                            for tx in new_txs:
-                                await self.notifier.send_transaction_alert(tx)
-                                await asyncio.sleep(0.5)
-                        else:
-                            logger.info(f"{monitor.network_name}: Found 0 transactions above {threshold} tokens")
-
+                            all_transactions[monitor.network_name] = new_txs
+                            logger.info(f"{monitor.network_name}: Found {len(new_txs)} new transactions")
                     except Exception as e:
                         logger.error(f"{monitor.network_name} error: {e}")
+
+                # Send alerts to each active user based on their thresholds
+                active_users = user_manager.get_active_users()
+                for user in active_users:
+                    for network, txs in all_transactions.items():
+                        threshold = user.thresholds.get(network, 0)
+                        # Filter transactions by user's threshold
+                        user_txs = [tx for tx in txs if tx.amount_native >= threshold]
+                        for tx in user_txs:
+                            await self.notifier.send_transaction_alert_to_user(tx, user.chat_id)
+                            await asyncio.sleep(0.3)
 
             except Exception as e:
                 logger.error(f"Error in monitor loop: {e}")

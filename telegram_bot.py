@@ -8,35 +8,48 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Runtime thresholds (can be changed via commands)
-runtime_thresholds = dict(config.NETWORK_THRESHOLDS)
 
-# Monitoring state
-monitoring_enabled = True
-
-
-def get_threshold(network: str) -> float:
-    """Get current threshold for network"""
-    return runtime_thresholds.get(network, 0)
+class UserSettings:
+    """Settings for a single user"""
+    def __init__(self, chat_id: str):
+        self.chat_id = chat_id
+        self.enabled = True
+        self.thresholds = dict(config.NETWORK_THRESHOLDS)
 
 
-def set_threshold(network: str, value: float) -> bool:
-    """Set threshold for network"""
-    if network in runtime_thresholds:
-        runtime_thresholds[network] = value
-        return True
-    return False
+class UserManager:
+    """Manages per-user settings"""
+    def __init__(self):
+        self.users: dict[str, UserSettings] = {}
+
+    def get_or_create_user(self, chat_id: str) -> UserSettings:
+        """Get user settings or create new user with defaults"""
+        chat_id = str(chat_id)
+        if chat_id not in self.users:
+            self.users[chat_id] = UserSettings(chat_id)
+            logger.info(f"New user registered: {chat_id}")
+        return self.users[chat_id]
+
+    def get_user(self, chat_id: str) -> UserSettings | None:
+        """Get user settings if exists"""
+        return self.users.get(str(chat_id))
+
+    def get_active_users(self) -> list[UserSettings]:
+        """Get all users with monitoring enabled"""
+        return [u for u in self.users.values() if u.enabled]
+
+    def get_all_users(self) -> list[UserSettings]:
+        """Get all registered users"""
+        return list(self.users.values())
 
 
-def is_monitoring_enabled() -> bool:
-    """Check if monitoring is enabled"""
-    return monitoring_enabled
+# Global user manager
+user_manager = UserManager()
 
 
-def set_monitoring_enabled(enabled: bool):
-    """Enable or disable monitoring"""
-    global monitoring_enabled
-    monitoring_enabled = enabled
+def get_user_manager() -> UserManager:
+    """Get the global user manager"""
+    return user_manager
 
 
 class TelegramNotifier:
@@ -93,39 +106,32 @@ class TelegramNotifier:
         }
         return symbols.get(network, 'TOKEN')
 
-    async def send_transaction_alert(self, tx: Transaction):
+    async def send_transaction_alert_to_user(self, tx: Transaction, chat_id: str):
+        """Send transaction alert to specific user"""
         try:
             message = self.format_transaction_message(tx)
             await self.bot.send_message(
-                chat_id=self.chat_id,
+                chat_id=chat_id,
                 text=message,
                 parse_mode='HTML',
                 disable_web_page_preview=False
             )
-            logger.info(f"Sent alert for {tx.network} transaction: {tx.tx_hash}")
+            logger.info(f"Sent alert for {tx.network} transaction to {chat_id}: {tx.tx_hash}")
         except TelegramError as e:
-            logger.error(f"Failed to send Telegram message: {e}")
+            logger.error(f"Failed to send Telegram message to {chat_id}: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error sending Telegram message: {e}")
+            logger.error(f"Unexpected error sending Telegram message to {chat_id}: {e}")
 
     async def send_startup_message(self):
+        """Send bot startup notification to admin"""
         try:
-            thresholds = '\n'.join([
-                f"  • {network}: {threshold:,.0f} tokens"
-                for network, threshold in runtime_thresholds.items()
-            ])
             message = f"""
 🤖 <b>Transaction Monitor Bot Started</b>
 
 Monitoring networks: TON, Everscale, Venom
-Token thresholds:
-{thresholds}
+Default thresholds: {config.NETWORK_THRESHOLDS}
 
-Commands:
-/thresholds - view current thresholds
-/threshold [network] [value] - set threshold
-
-✅ Bot is now active and monitoring...
+Bot is ready to accept users.
 """
             await self.bot.send_message(
                 chat_id=self.chat_id,
@@ -137,6 +143,7 @@ Commands:
             logger.error(f"Failed to send startup message: {e}")
 
     async def send_error_message(self, error_msg: str):
+        """Send error notification to admin"""
         try:
             message = f"⚠️ <b>Error:</b> {error_msg}"
             await self.bot.send_message(
@@ -148,14 +155,77 @@ Commands:
             logger.error(f"Failed to send error message: {e}")
 
 
-async def thresholds_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current thresholds"""
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start monitoring for user"""
+    chat_id = str(update.effective_chat.id)
+    user = user_manager.get_or_create_user(chat_id)
+    user.enabled = True
+
     thresholds = '\n'.join([
         f"  • {network}: {threshold:,.0f} tokens"
-        for network, threshold in runtime_thresholds.items()
+        for network, threshold in user.thresholds.items()
     ])
     message = f"""
-📊 <b>Current Thresholds</b>
+✅ <b>Monitoring Started</b>
+
+Networks: TON, Everscale, Venom
+Your thresholds:
+{thresholds}
+
+Use /stop to pause monitoring.
+Use /threshold to change thresholds.
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+    logger.info(f"User {chat_id} started monitoring")
+
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop monitoring for user"""
+    chat_id = str(update.effective_chat.id)
+    user = user_manager.get_or_create_user(chat_id)
+    user.enabled = False
+
+    message = """
+⏹ <b>Monitoring Stopped</b>
+
+No alerts will be sent until you use /start again.
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+    logger.info(f"User {chat_id} stopped monitoring")
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot status for user"""
+    chat_id = str(update.effective_chat.id)
+    user = user_manager.get_or_create_user(chat_id)
+
+    status = "🟢 Active" if user.enabled else "🔴 Stopped"
+    thresholds = '\n'.join([
+        f"  • {network}: {threshold:,.0f} tokens"
+        for network, threshold in user.thresholds.items()
+    ])
+    message = f"""
+📊 <b>Your Status</b>
+
+Status: {status}
+
+Your thresholds:
+{thresholds}
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+
+
+async def thresholds_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current thresholds for user"""
+    chat_id = str(update.effective_chat.id)
+    user = user_manager.get_or_create_user(chat_id)
+
+    thresholds = '\n'.join([
+        f"  • {network}: {threshold:,.0f} tokens"
+        for network, threshold in user.thresholds.items()
+    ])
+    message = f"""
+📊 <b>Your Thresholds</b>
 
 {thresholds}
 
@@ -166,7 +236,10 @@ Example: /threshold TON 5000
 
 
 async def threshold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set threshold for a network"""
+    """Set threshold for user"""
+    chat_id = str(update.effective_chat.id)
+    user = user_manager.get_or_create_user(chat_id)
+
     if len(context.args) < 2:
         await update.message.reply_text(
             "Usage: /threshold [network] [value]\n"
@@ -194,12 +267,13 @@ async def threshold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Threshold must be a positive number.")
         return
 
-    if set_threshold(network, value):
+    if network in user.thresholds:
+        user.thresholds[network] = value
         await update.message.reply_text(
-            f"✅ {network} threshold set to {value:,.0f} tokens",
+            f"✅ Your {network} threshold set to {value:,.0f} tokens",
             parse_mode='HTML'
         )
-        logger.info(f"Threshold changed: {network} = {value}")
+        logger.info(f"User {chat_id} set {network} threshold to {value}")
     else:
         await update.message.reply_text(
             f"Unknown network: {network}\n"
@@ -207,66 +281,18 @@ async def threshold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start monitoring"""
-    set_monitoring_enabled(True)
-    thresholds = '\n'.join([
-        f"  • {network}: {threshold:,.0f} tokens"
-        for network, threshold in runtime_thresholds.items()
-    ])
-    message = f"""
-✅ <b>Monitoring Started</b>
-
-Networks: TON, Everscale, Venom
-Token thresholds:
-{thresholds}
-
-Use /stop to pause monitoring.
-"""
-    await update.message.reply_text(message.strip(), parse_mode='HTML')
-    logger.info("Monitoring enabled via /start command")
-
-
-async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stop monitoring"""
-    set_monitoring_enabled(False)
-    message = """
-⏹ <b>Monitoring Stopped</b>
-
-No alerts will be sent until you use /start again.
-"""
-    await update.message.reply_text(message.strip(), parse_mode='HTML')
-    logger.info("Monitoring disabled via /stop command")
-
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show bot status"""
-    status = "🟢 Active" if is_monitoring_enabled() else "🔴 Stopped"
-    thresholds = '\n'.join([
-        f"  • {network}: {threshold:,.0f} tokens"
-        for network, threshold in runtime_thresholds.items()
-    ])
-    message = f"""
-📊 <b>Bot Status</b>
-
-Status: {status}
-
-Token thresholds:
-{thresholds}
-"""
-    await update.message.reply_text(message.strip(), parse_mode='HTML')
-
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help message"""
     message = """
 🤖 <b>Transaction Monitor Bot</b>
 
+Monitor large transactions on TON, Everscale, and Venom networks.
+
 Commands:
 /start - start monitoring
 /stop - stop monitoring
-/status - show bot status
-/thresholds - view current thresholds
+/status - show your status
+/thresholds - view your thresholds
 /threshold [network] [value] - set threshold
 /help - show this message
 
@@ -275,6 +301,8 @@ Networks: TON, Everscale, Venom
 Example:
 /threshold TON 5000
 /threshold Everscale 50000
+
+Each user has independent settings.
 """
     await update.message.reply_text(message.strip(), parse_mode='HTML')
 
