@@ -31,28 +31,7 @@ ELECTOR_ADDRESSES = {
     ]
 }
 
-# Known CEX (Centralized Exchange) addresses only
-EXCHANGE_ADDRESSES = {
-    'TON': {
-        'EQBfAN7LfaUYgXZNw5Wc7GBgkEX2yhuJ5ka95J1JJwXXf4a8': 'Binance',
-        'EQCjk1hh952vWaE9bRguFkAhDAL5jj3xj9p0uPWrFBq_GEMS': 'OKX',
-        'EQBYivdc0GAk-nnczaMnYNuSjpeXu2nJS3DZ4KqLjosX5sVC': 'Bybit',
-        'EQA0i8-CdGnF_DhUHHf92R1ONH6sIA9vLZ_WLcCIhfBBXwtG': 'KuCoin',
-        'EQCA1W_I267-luVo9CzV7iCcrA1OO5vVeXD0QHACvBn0jKiH': 'Gate.io',
-        'EQB5lISMH8vLxXpqWph7ZutCS4tU4QdZtrUUpmtgDCsO73JR': 'MEXC',
-        'EQCzFTXpNNsFu8IgJnRnkDyBCL2ry8KgZYiDi3Jt31ie8EIQ': 'HTX (Huobi)',
-        'EQABMMdzRuntgt9nfRB61qd1wR-cGPagXA3ReQazVYUNrT7p': 'Crypto.com',
-        'EQDD8dqOzaj4zUK6ziJOo_G2lx6qf1TEktTRkFJ7T1c_fPQb': 'Bitfinex',
-    },
-    'Everscale': {
-        # No major CEX for Everscale currently
-    },
-    'Venom': {
-        # No major CEX for Venom currently
-    }
-}
-
-# Explorer URLs (scraping sources)
+# Explorer URLs
 EXPLORERS = {
     'TON': {
         'base': 'https://tonscan.org',

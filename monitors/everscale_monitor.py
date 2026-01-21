@@ -15,7 +15,6 @@ class EverscaleMonitor(BaseMonitor):
         self.explorer_url = 'https://everscan.io'
         self.price_cache = {'price': 0, 'timestamp': 0}
         self.elector_addresses = config.ELECTOR_ADDRESSES.get('Everscale', [])
-        self.exchange_addresses = config.EXCHANGE_ADDRESSES.get('Everscale', {})
 
     async def get_current_price_usd(self) -> float:
         """Get EVER price in USD from CoinGecko"""
@@ -60,15 +59,6 @@ class EverscaleMonitor(BaseMonitor):
             if receiver and elector_addr in receiver:
                 return True
         return False
-
-    def _get_exchange_name(self, sender: str, receiver: str) -> str | None:
-        """Check if transaction involves an exchange and return its name"""
-        for addr, name in self.exchange_addresses.items():
-            if sender and addr in sender:
-                return name
-            if receiver and addr in receiver:
-                return name
-        return None
 
     async def get_latest_transactions(self) -> List[Transaction]:
         """Get latest Everscale transactions using GraphQL API"""
@@ -126,11 +116,6 @@ class EverscaleMonitor(BaseMonitor):
                                 logger.debug(f"Everscale: Skipping elector transaction {tx['id']}")
                                 continue
 
-                            # Check if exchange is involved
-                            exchange_name = self._get_exchange_name(sender, receiver)
-                            if not exchange_name:
-                                continue  # Skip non-exchange transactions
-
                             amount_usd = amount_ever * ever_price if ever_price > 0 else 0
 
                             transactions.append(Transaction(
@@ -140,8 +125,7 @@ class EverscaleMonitor(BaseMonitor):
                                 sender=sender,
                                 receiver=receiver,
                                 timestamp=tx['now'],
-                                amount_native=amount_ever,
-                                exchange_name=exchange_name
+                                amount_native=amount_ever
                             ))
 
                         except Exception as e:
