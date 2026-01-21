@@ -69,13 +69,15 @@ class TelegramNotifier:
         explorer_info = config.EXPLORERS.get(tx.network, {})
         explorer_link = f"{explorer_info.get('tx', '')}{tx.tx_hash}"
 
+        exchange_line = f"\n🏦 <b>Exchange:</b> {tx.exchange_name}" if tx.exchange_name else ""
+
         message = f"""
-🚨 <b>Large Transaction Detected!</b>
+🚨 <b>Exchange Transaction Detected!</b>
 
 💰 <b>Amount:</b> ${tx.amount_usd:,.2f}
    ({tx.amount_native:,.4f} {self._get_token_symbol(tx.network)})
 
-🌐 <b>Network:</b> {tx.network}
+🌐 <b>Network:</b> {tx.network}{exchange_line}
 
 📤 <b>From:</b> <code>{sender_short}</code>
 📥 <b>To:</b> <code>{receiver_short}</code>

@@ -31,6 +31,34 @@ ELECTOR_ADDRESSES = {
     ]
 }
 
+# Known exchange addresses
+EXCHANGE_ADDRESSES = {
+    'TON': {
+        # Major exchanges
+        'EQBfAN7LfaUYgXZNw5Wc7GBgkEX2yhuJ5ka95J1JJwXXf4a8': 'Binance',
+        'EQCjk1hh952vWaE9bRguFkAhDAL5jj3xj9p0uPWrFBq_GEMS': 'OKX',
+        'EQBYivdc0GAk-nnczaMnYNuSjpeXu2nJS3DZ4KqLjosX5sVC': 'Bybit',
+        'EQA0i8-CdGnF_DhUHHf92R1ONH6sIA9vLZ_WLcCIhfBBXwtG': 'KuCoin',
+        'EQCA1W_I267-luVo9CzV7iCcrA1OO5vVeXD0QHACvBn0jKiH': 'Gate.io',
+        'EQB5lISMH8vLxXpqWph7ZutCS4tU4QdZtrUUpmtgDCsO73JR': 'MEXC',
+        'EQCzFTXpNNsFu8IgJnRnkDyBCL2ry8KgZYiDi3Jt31ie8EIQ': 'HTX (Huobi)',
+        'EQABMMdzRuntgt9nfRB61qd1wR-cGPagXA3ReQazVYUNrT7p': 'Crypto.com',
+        'EQDD8dqOzaj4zUK6ziJOo_G2lx6qf1TEktTRkFJ7T1c_fPQb': 'Bitfinex',
+        # DEX
+        'EQB3ncyBUTjZUA5EnFKR5_EnOMI9V1tTEAAPaiU71gc4TiUt': 'STON.fi',
+        'EQBIlZX2URWkXCSg3QF2MJZU-wC5XkBoLww-hdWk2G37Jc6N': 'DeDust',
+    },
+    'Everscale': {
+        # Major bridges and DEX
+        '0:a519f99bb5d6d51ef958ed24d337ad75a1c770885dcd42d51d6663f9fcdacfb2': 'FlatQube DEX',
+        '0:5eb5713ea9b4a0f3a13bc91b282cde809636eb1e68d2fcb6427571aca880177a': 'Octus Bridge',
+    },
+    'Venom': {
+        # Venom DEX and bridges
+        '0:5a3d46f40e59dab1fc1a0a0a4f8ca4f8a7a0e5c7d4b3a2918273645506070809': 'VenomSwap',
+    }
+}
+
 # Explorer URLs (scraping sources)
 EXPLORERS = {
     'TON': {

@@ -15,6 +15,7 @@ class TONMonitor(BaseMonitor):
         self.explorer_url = 'https://tonscan.org'
         self.price_cache = {'price': 0, 'timestamp': 0}
         self.elector_addresses = config.ELECTOR_ADDRESSES.get('TON', [])
+        self.exchange_addresses = config.EXCHANGE_ADDRESSES.get('TON', {})
 
     async def get_current_price_usd(self) -> float:
         """Get TON price in USD from CoinGecko"""
@@ -67,6 +68,15 @@ class TONMonitor(BaseMonitor):
                 return True
         return False
 
+    def _get_exchange_name(self, sender: str, receiver: str) -> str | None:
+        """Check if transaction involves an exchange and return its name"""
+        for addr, name in self.exchange_addresses.items():
+            if sender and addr in sender:
+                return name
+            if receiver and addr in receiver:
+                return name
+        return None
+
     async def get_latest_transactions(self) -> List[Transaction]:
         """Get latest TON transactions using TonCenter API v3"""
         transactions = []
@@ -103,6 +113,11 @@ class TONMonitor(BaseMonitor):
                                 logger.debug(f"TON: Skipping elector transaction {tx['hash']}")
                                 continue
 
+                            # Check if exchange is involved
+                            exchange_name = self._get_exchange_name(sender, receiver)
+                            if not exchange_name:
+                                continue  # Skip non-exchange transactions
+
                             amount_usd = amount_ton * ton_price if ton_price > 0 else 0
 
                             transactions.append(Transaction(
@@ -112,7 +127,8 @@ class TONMonitor(BaseMonitor):
                                 sender=self._format_address(sender),
                                 receiver=self._format_address(receiver),
                                 timestamp=tx['now'],
-                                amount_native=amount_ton
+                                amount_native=amount_ton,
+                                exchange_name=exchange_name
                             ))
 
                         except Exception as e:
