@@ -11,7 +11,7 @@ from typing import List
 
 import config
 from telegram.ext import Application
-from telegram_bot import TelegramNotifier, setup_handlers, get_threshold
+from telegram_bot import TelegramNotifier, setup_handlers, get_threshold, is_monitoring_enabled
 from monitors import (
     TONMonitor,
     EverscaleMonitor,
@@ -76,6 +76,11 @@ class TransactionMonitorBot:
         """Main monitoring loop"""
         while self.is_running:
             try:
+                # Skip if monitoring is disabled
+                if not is_monitoring_enabled():
+                    await asyncio.sleep(config.POLL_INTERVAL_SECONDS)
+                    continue
+
                 # Check transactions for each network with current runtime thresholds
                 for monitor in self.monitors:
                     try:

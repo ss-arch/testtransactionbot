@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 # Runtime thresholds (can be changed via commands)
 runtime_thresholds = dict(config.NETWORK_THRESHOLDS)
 
+# Monitoring state
+monitoring_enabled = True
+
 
 def get_threshold(network: str) -> float:
     """Get current threshold for network"""
@@ -23,6 +26,17 @@ def set_threshold(network: str, value: float) -> bool:
         runtime_thresholds[network] = value
         return True
     return False
+
+
+def is_monitoring_enabled() -> bool:
+    """Check if monitoring is enabled"""
+    return monitoring_enabled
+
+
+def set_monitoring_enabled(enabled: bool):
+    """Enable or disable monitoring"""
+    global monitoring_enabled
+    monitoring_enabled = enabled
 
 
 class TelegramNotifier:
@@ -193,12 +207,65 @@ async def threshold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start monitoring"""
+    set_monitoring_enabled(True)
+    thresholds = '\n'.join([
+        f"  • {network}: {threshold:,.0f} tokens"
+        for network, threshold in runtime_thresholds.items()
+    ])
+    message = f"""
+✅ <b>Monitoring Started</b>
+
+Networks: TON, Everscale, Venom
+Token thresholds:
+{thresholds}
+
+Use /stop to pause monitoring.
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+    logger.info("Monitoring enabled via /start command")
+
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop monitoring"""
+    set_monitoring_enabled(False)
+    message = """
+⏹ <b>Monitoring Stopped</b>
+
+No alerts will be sent until you use /start again.
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+    logger.info("Monitoring disabled via /stop command")
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot status"""
+    status = "🟢 Active" if is_monitoring_enabled() else "🔴 Stopped"
+    thresholds = '\n'.join([
+        f"  • {network}: {threshold:,.0f} tokens"
+        for network, threshold in runtime_thresholds.items()
+    ])
+    message = f"""
+📊 <b>Bot Status</b>
+
+Status: {status}
+
+Token thresholds:
+{thresholds}
+"""
+    await update.message.reply_text(message.strip(), parse_mode='HTML')
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show help message"""
     message = """
 🤖 <b>Transaction Monitor Bot</b>
 
 Commands:
+/start - start monitoring
+/stop - stop monitoring
+/status - show bot status
 /thresholds - view current thresholds
 /threshold [network] [value] - set threshold
 /help - show this message
@@ -214,7 +281,9 @@ Example:
 
 def setup_handlers(application: Application):
     """Setup command handlers"""
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("stop", stop_command))
+    application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("thresholds", thresholds_command))
     application.add_handler(CommandHandler("threshold", threshold_command))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("start", help_command))
